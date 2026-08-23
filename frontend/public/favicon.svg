@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ResumeIQ">
+  <rect width="32" height="32" rx="8" fill="#4A3AE0" />
+  <!-- The match rail: job requirement on the left, resume evidence on the right,
+       connected where they meet. -->
+  <g stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" fill="none">
+    <path d="M9 9v14" />
+    <path d="M23 9v14" />
+    <path d="M9 13h14" opacity="0.95" />
+    <path d="M9 18h8" opacity="0.6" />
+  </g>
+</svg>

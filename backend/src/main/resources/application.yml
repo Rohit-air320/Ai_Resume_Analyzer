@@ -1,0 +1,56 @@
+# ===========================================================================
+#  ResumeIQ API — shared configuration
+#  Profile-specific datasource settings live in application-{profile}.yml
+#  Default profile is "dev" (H2 in memory), so `mvn spring-boot:run` works
+#  with no database installed.
+# ===========================================================================
+spring:
+  application:
+    name: ResumeIQ API
+  profiles:
+    default: dev
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE:5MB}
+      max-request-size: ${MAX_REQUEST_SIZE:8MB}
+  jackson:
+    # Omit null fields so error payloads stay small and predictable
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+  jpa:
+    open-in-view: false
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    # Never leak internals to the browser (spec section 32)
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+  compression:
+    enabled: true
+
+resumeiq:
+  app:
+    name: ResumeIQ
+    version: 0.1.0
+  cors:
+    # Comma-separated browser origins allowed to call this API
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    root: INFO
+    com.resumeiq: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"

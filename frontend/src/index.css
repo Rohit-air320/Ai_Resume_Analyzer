@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+   Design tokens
+   Values are space-separated RGB channels so Tailwind can apply opacity:
+   rgb(var(--brand-600) / 0.1). Light values live on :root, dark values on
+   .dark, and nothing else in the codebase hardcodes a colour.
+   =========================================================================== */
+:root {
+  color-scheme: light;
+
+  /* Surfaces — a cool paper white rather than pure #fff, so cards can be #fff
+     and still separate from the page without a heavy shadow. */
+  --bg: 247 248 252;
+  --surface: 255 255 255;
+  --surface-raised: 255 255 255;
+  --surface-sunken: 241 243 249;
+
+  --line: 226 229 240;
+  --line-strong: 203 209 228;
+
+  --ink: 14 18 38;
+  --ink-muted: 90 98 124;
+  --ink-subtle: 132 140 164;
+  --ink-inverse: 255 255 255;
+
+  /* Brand: indigo with a violet lean, per the brief */
+  --brand-50: 238 240 255;
+  --brand-100: 223 226 255;
+  --brand-200: 196 200 255;
+  --brand-300: 163 166 255;
+  --brand-400: 132 130 250;
+  --brand-500: 106 95 240;
+  --brand-600: 74 58 224;
+  --brand-700: 60 45 191;
+  --brand-800: 50 39 153;
+  --brand-900: 43 35 122;
+
+  --accent-400: 190 141 255;
+  --accent-500: 155 92 255;
+  --accent-600: 132 61 232;
+
+  --success-500: 22 163 74;
+  --success-600: 21 128 61;
+  --warning-500: 217 119 6;
+  --warning-600: 180 83 9;
+  --danger-500: 220 38 38;
+  --danger-600: 185 28 28;
+
+  /* Score bands: 0-39, 40-59, 60-74, 75-89, 90-100.
+     Red through orange and yellow into teal and green, so the colour alone
+     communicates direction of travel, not just good versus bad. */
+  --band-critical: 220 38 38;
+  --band-low: 232 89 12;
+  --band-moderate: 202 138 4;
+  --band-strong: 13 148 136;
+  --band-excellent: 22 163 74;
+
+  --shadow-color: 20 24 60;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --bg: 8 10 22;
+  --surface: 15 18 34;
+  --surface-raised: 22 26 46;
+  --surface-sunken: 11 13 27;
+
+  --line: 32 38 64;
+  --line-strong: 50 58 90;
+
+  --ink: 233 236 245;
+  --ink-muted: 154 162 186;
+  --ink-subtle: 116 124 150;
+  --ink-inverse: 10 12 26;
+
+  /* Deep indigos disappear on a near-black page, so the mid-scale shifts up.
+     Components keep asking for brand-600; the token decides what that means. */
+  --brand-50: 26 24 64;
+  --brand-100: 33 31 84;
+  --brand-200: 45 42 118;
+  --brand-300: 74 66 176;
+  --brand-400: 118 110 240;
+  --brand-500: 134 126 248;
+  --brand-600: 124 112 246;
+  --brand-700: 106 95 240;
+  --brand-800: 88 78 214;
+  --brand-900: 70 62 176;
+
+  --accent-400: 199 160 255;
+  --accent-500: 175 122 255;
+  --accent-600: 155 92 255;
+
+  --success-500: 34 197 94;
+  --success-600: 22 163 74;
+  --warning-500: 245 158 11;
+  --warning-600: 217 119 6;
+  --danger-500: 248 113 113;
+  --danger-600: 239 68 68;
+
+  --band-critical: 248 113 113;
+  --band-low: 251 146 60;
+  --band-moderate: 250 204 21;
+  --band-strong: 45 212 191;
+  --band-excellent: 74 222 128;
+
+  --shadow-color: 0 0 0;
+}
+
+@layer base {
+  * {
+    border-color: rgb(var(--line));
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    /* Every page is a column layout; horizontal overflow is always a bug. */
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3 {
+    @apply font-display font-semibold text-ink;
+    text-wrap: balance;
+  }
+
+  /* Numbers are data. Tabular mono figures stop scores jittering as they animate. */
+  [data-numeric] {
+    @apply font-mono tabular-nums;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-bg;
+  }
+
+  ::selection {
+    background-color: rgb(var(--brand-500) / 0.22);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Single-class primitives only. No element selectors, so nothing here can
+     silently override a utility applied at the call site. */
+  .card {
+    @apply rounded-card border border-line bg-surface shadow-card;
+  }
+
+  .panel {
+    @apply rounded-panel border border-line bg-surface shadow-card;
+  }
+
+  .eyebrow {
+    @apply font-mono text-eyebrow uppercase text-ink-subtle;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium
+           transition-colors duration-150 ease-out-expo disabled:pointer-events-none disabled:opacity-55;
+  }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply border border-line-strong bg-surface text-ink hover:bg-surface-sunken;
+  }
+
+  .btn-ghost {
+    @apply text-ink-muted hover:bg-surface-sunken hover:text-ink;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-sunken
+           px-2.5 py-1 font-mono text-xs text-ink-muted;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-surface-sunken;
+  }
+
+  .skeleton::after {
+    @apply absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/25 to-transparent;
+    content: '';
+  }
+}

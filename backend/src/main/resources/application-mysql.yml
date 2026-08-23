@@ -1,0 +1,28 @@
+# ===========================================================================
+#  Profile: mysql
+#  Real MySQL 8. Every value comes from the environment — no credentials in
+#  source control. Create the schema first:
+#      CREATE DATABASE resumeiq CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+#  Run with:  mvn spring-boot:run -Dspring-boot.run.profiles=mysql
+# ===========================================================================
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+  jpa:
+    hibernate:
+      # "update" keeps local iteration painless. For a real deployment switch
+      # to "validate" and manage schema changes with versioned migrations.
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 20
+        order_inserts: true
