@@ -16,6 +16,11 @@ module.exports = {
     'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     'no-console': ['warn', { allow: ['warn', 'error'] }],
+    // Off deliberately. prop-types is a runtime type checker for a codebase that has
+    // no other runtime type checking, and it drifts from the component the moment
+    // anybody edits one without the other. Component contracts are documented in
+    // JSDoc above each component instead, where they cost nothing at runtime.
+    'react/prop-types': 'off',
   },
   overrides: [
     {

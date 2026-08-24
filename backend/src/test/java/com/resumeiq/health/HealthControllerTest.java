@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -16,8 +17,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Web-layer slice test. Verifies the route, the JSON field names the frontend depends on,
  * and that dates serialise as ISO-8601 strings rather than epoch numbers.
+ *
+ * <p>{@code addFilters = false} switches the security chain off for this slice. It is needed
+ * because a {@code @WebMvcTest} does not load the application's own {@code SecurityConfig} but
+ * does auto-configure Spring Security's default chain, which closes every path — so without this
+ * the test would fail on a 401 that production would never produce. Whether {@code /api/health}
+ * is genuinely reachable without a token is a question about the real chain, and it is answered
+ * by {@code SecurityRulesTest} with the real chain loaded.
  */
 @WebMvcTest(HealthController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @EnableConfigurationProperties(ResumeIqProperties.class)
 @ActiveProfiles("dev")
 class HealthControllerTest {

@@ -20,6 +20,26 @@ public enum ErrorCode {
     /** No credentials, or credentials that are expired or malformed. */
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED),
 
+    /**
+     * Email and password did not match an account.
+     *
+     * <p>One code for both "no such email" and "wrong password", because two codes would
+     * turn the login form into an account-enumeration oracle.
+     */
+    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED),
+
+    /**
+     * The refresh token is missing, expired, or was already used.
+     *
+     * <p>Distinct from {@link #UNAUTHORIZED} because the frontend must react differently:
+     * an expired access token is worth one silent refresh, whereas this means the session
+     * is finished and the only correct move is to show the login screen.
+     */
+    SESSION_EXPIRED(HttpStatus.UNAUTHORIZED),
+
+    /** Too many attempts from this email or address. Carries {@code Retry-After}. */
+    TOO_MANY_REQUESTS(HttpStatus.TOO_MANY_REQUESTS),
+
     /** Authenticated, but the resource belongs to somebody else. */
     FORBIDDEN(HttpStatus.FORBIDDEN),
 
@@ -77,6 +97,7 @@ public enum ErrorCode {
             case 409 -> CONFLICT;
             case 413 -> FILE_TOO_LARGE;
             case 415 -> UNSUPPORTED_MEDIA_TYPE;
+            case 429 -> TOO_MANY_REQUESTS;
             default -> statusCode >= 500 ? INTERNAL_ERROR : BAD_REQUEST;
         };
     }

@@ -3,10 +3,17 @@ import axios from 'axios'
 /**
  * Single axios instance for the whole app.
  *
- * Two jobs beyond plain HTTP:
+ * Three jobs beyond plain HTTP:
  *  1. attach the JWT, without this module needing to know how auth stores it
  *  2. normalise every failure into one ApiError shape, so components never touch
  *     error.response?.data?.something and never see a raw axios error
+ *  3. renew a session once, silently, when a request arrives with a dead access
+ *     token — so a 15-minute token is invisible to every calling component
+ *
+ * All three are registrations, not imports: auth hands this module a token getter
+ * and a recovery function, and this module knows nothing about React context or
+ * where a token is kept. That direction matters, because the alternative is a
+ * cycle — auth calls the API, and the API would call auth.
  */
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -18,6 +25,10 @@ export const LONG_TIMEOUT_MS = 120_000
 export const apiClient = axios.create({
   baseURL,
   timeout: DEFAULT_TIMEOUT_MS,
+  // The refresh token is an httpOnly cookie, and axios omits cookies unless asked.
+  // Without this, /api/auth/refresh arrives with nothing to rotate and every
+  // session would end after fifteen minutes.
+  withCredentials: true,
   // No default Content-Type on purpose. axios already sends application/json for
   // plain objects, and a hardcoded JSON header would make it serialise the resume
   // upload's FormData to JSON instead of multipart, dropping the file.
@@ -101,7 +112,52 @@ export function toApiError(error) {
   })
 }
 
+/**
+ * Paths that must never trigger a recovery attempt.
+ *
+ * Sign-in and registration answer 401 when the credentials are wrong, and refresh
+ * answers 401 when the session is over. Retrying any of those after a refresh is
+ * either pointless or a loop: refresh failing would call refresh again.
+ */
+const NEVER_RECOVERED = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout']
+
+/** Replaced by auth in Phase 3. Returns true when the retry is worth making. */
+let recoverSession = async () => false
+
+export function setSessionRecovery(recovery) {
+  recoverSession = typeof recovery === 'function' ? recovery : async () => false
+}
+
+function isRecoverable(apiError, request) {
+  // UNAUTHORIZED only. SESSION_EXPIRED means the refresh token itself is finished and
+  // INVALID_CREDENTIALS means the password was wrong — neither improves on a second try.
+  return apiError.status === 401
+    && apiError.code === 'UNAUTHORIZED'
+    && Boolean(request)
+    && !request.sessionAlreadyRecovered
+    && !NEVER_RECOVERED.some((path) => (request.url || '').startsWith(path))
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => Promise.reject(toApiError(error)),
+  async (error) => {
+    const apiError = toApiError(error)
+    const request = error?.config
+
+    if (!isRecoverable(apiError, request)) {
+      return Promise.reject(apiError)
+    }
+
+    // Marked on the config, so one request gets one retry. A flag on this module
+    // instead would let two concurrent requests each consume the other's attempt.
+    request.sessionAlreadyRecovered = true
+
+    if (!(await recoverSession())) {
+      return Promise.reject(apiError)
+    }
+
+    // Re-entering through the instance rather than a bare axios call, so the request
+    // interceptor runs again and picks up the token the refresh just produced.
+    return apiClient.request(request)
+  },
 )

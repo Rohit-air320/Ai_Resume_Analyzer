@@ -193,6 +193,22 @@
            px-2.5 py-1 font-mono text-xs text-ink-muted;
   }
 
+  /* Inputs sit on the sunken surface rather than the card they live on, so a field
+     reads as a place to type without needing a heavy border to say so. */
+  .field {
+    @apply block w-full rounded-lg border border-line bg-surface-sunken px-3.5 py-2.5 text-sm
+           text-ink transition-colors duration-150 ease-out-expo
+           placeholder:text-ink-subtle focus:border-brand-500 focus:bg-surface;
+  }
+
+  .field-invalid {
+    @apply border-danger-500 focus:border-danger-500;
+  }
+
+  .field-label {
+    @apply block text-sm font-medium text-ink;
+  }
+
   .skeleton {
     @apply relative overflow-hidden rounded-md bg-surface-sunken;
   }

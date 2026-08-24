@@ -7,8 +7,11 @@ import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -48,6 +51,56 @@ public class GlobalExceptionHandler {
         logByStatus(code, request, ex);
         return ResponseEntity.status(code.status())
                 .body(ApiErrorResponse.of(code, ex.getMessage(), request.getRequestURI()));
+    }
+
+    /**
+     * Login throttling. The one handler that adds a header, because a client that knows how
+     * long to wait can count down instead of retrying blindly.
+     */
+    @ExceptionHandler(TooManyAttemptsException.class)
+    public ResponseEntity<ApiErrorResponse> handleTooManyAttempts(
+            TooManyAttemptsException ex, HttpServletRequest request) {
+
+        log.warn("Throttled {} {}: retry after {}s",
+                request.getMethod(), request.getRequestURI(), ex.retryAfterSeconds());
+        return ResponseEntity.status(ErrorCode.TOO_MANY_REQUESTS.status())
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.retryAfterSeconds()))
+                .body(ApiErrorResponse.of(
+                        ErrorCode.TOO_MANY_REQUESTS, ex.getMessage(), request.getRequestURI()));
+    }
+
+    /**
+     * Spring Security's own exceptions, for the cases this advice can actually see.
+     *
+     * <p>Rejections by the filter chain never reach here — filters run outside the
+     * {@code DispatcherServlet}, which is why {@code RestAuthenticationEntryPoint} and
+     * {@code RestAccessDeniedHandler} exist. What does reach here is a check made inside a
+     * controller or service, and without these two handlers the catch-all below would report
+     * "access denied" as an internal error.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthentication(
+            AuthenticationException ex, HttpServletRequest request) {
+
+        log.warn("Authentication failed on {} {}: {}",
+                request.getMethod(), request.getRequestURI(), ex.getClass().getSimpleName());
+        return ResponseEntity.status(ErrorCode.UNAUTHORIZED.status())
+                .body(ApiErrorResponse.of(
+                        ErrorCode.UNAUTHORIZED,
+                        "Please sign in to continue.",
+                        request.getRequestURI()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(
+            AccessDeniedException ex, HttpServletRequest request) {
+
+        log.warn("Access denied on {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(ErrorCode.FORBIDDEN.status())
+                .body(ApiErrorResponse.of(
+                        ErrorCode.FORBIDDEN,
+                        "You do not have access to that.",
+                        request.getRequestURI()));
     }
 
     /** @Valid failures on a request body. */
