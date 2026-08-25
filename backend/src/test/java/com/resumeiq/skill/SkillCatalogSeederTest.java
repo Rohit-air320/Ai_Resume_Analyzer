@@ -1,8 +1,8 @@
 package com.resumeiq.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.resumeiq.config.ResumeIqProperties;
 import com.resumeiq.support.RepositoryTest;
+import com.resumeiq.support.TestProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,15 +31,11 @@ class SkillCatalogSeederTest {
     private TestEntityManager em;
 
     private SkillCatalogSeeder seeder(boolean enabled) {
-        return new SkillCatalogSeeder(skills, new ObjectMapper(), new ResumeIqProperties(
-                new ResumeIqProperties.App("ResumeIQ", "test"),
-                new ResumeIqProperties.Cors(List.of("http://localhost:5173")),
-                new ResumeIqProperties.Seed(enabled),
-                // The seeder reads none of this. It is here because the properties record is a
-                // single object, and passing throwaway auth settings is honest about that,
-                // whereas a null would invite a null check into production code that has no
-                // reason to want one.
-                new ResumeIqProperties.Auth("", 15, 7, 4, "resumeiq_rt", "Lax", false, 5, 15)));
+        // The seeder reads one flag. It takes the whole properties record because that is a
+        // single object, and a null for the parts it ignores would invite a null check into
+        // production code that has no reason to want one.
+        return new SkillCatalogSeeder(skills, new ObjectMapper(),
+                TestProperties.withSeedSkills(enabled));
     }
 
     @Test

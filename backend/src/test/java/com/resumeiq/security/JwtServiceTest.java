@@ -1,11 +1,8 @@
 package com.resumeiq.security;
 
 import com.resumeiq.config.ResumeIqProperties;
-import com.resumeiq.config.ResumeIqProperties.App;
-import com.resumeiq.config.ResumeIqProperties.Auth;
-import com.resumeiq.config.ResumeIqProperties.Cors;
-import com.resumeiq.config.ResumeIqProperties.Seed;
 import com.resumeiq.security.JwtService.VerifiedAccessToken;
+import com.resumeiq.support.TestProperties;
 import com.resumeiq.user.Role;
 import com.resumeiq.user.User;
 import io.jsonwebtoken.ExpiredJwtException;
@@ -16,7 +13,6 @@ import org.springframework.core.env.StandardEnvironment;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -164,10 +160,6 @@ class JwtServiceTest {
     }
 
     private static ResumeIqProperties propertiesWith(String signingKey) {
-        return new ResumeIqProperties(
-                new App("ResumeIQ", "0.1.0"),
-                new Cors(List.of("http://example.test")),
-                new Seed(false),
-                new Auth(signingKey, 15, 7, 4, "resumeiq_rt", "Lax", false, 5, 15));
+        return TestProperties.withAuth(TestProperties.auth(signingKey));
     }
 }

@@ -1,5 +1,6 @@
 package com.resumeiq.common.api;
 
+import com.resumeiq.common.domain.Timestamps;
 import com.resumeiq.common.exception.ErrorCode;
 
 import java.time.Instant;
@@ -35,11 +36,11 @@ public record ApiErrorResponse(
     }
 
     public static ApiErrorResponse of(ErrorCode code, String message, String path) {
-        return new ApiErrorResponse(code.name(), message, null, path, Instant.now());
+        return new ApiErrorResponse(code.name(), message, null, path, Timestamps.now());
     }
 
     public static ApiErrorResponse validation(String message, List<FieldViolation> fieldErrors, String path) {
         return new ApiErrorResponse(
-                ErrorCode.VALIDATION_FAILED.name(), message, List.copyOf(fieldErrors), path, Instant.now());
+                ErrorCode.VALIDATION_FAILED.name(), message, List.copyOf(fieldErrors), path, Timestamps.now());
     }
 }

@@ -22,6 +22,8 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <springdoc.version>2.5.0</springdoc.version>
     <jjwt.version>0.12.5</jjwt.version>
+    <pdfbox.version>3.0.3</pdfbox.version>
+    <poi.version>5.2.5</poi.version>
   </properties>
 
   <dependencies>
@@ -100,6 +102,31 @@
       <version>${springdoc.version}</version>
     </dependency>
 
+    <!--
+      PDF text extraction.
+
+      PDFBox 3.x rather than 2.x for two reasons: it is the actively maintained line
+      (2.x receives security fixes only), and it logs through the Log4j2 API, which
+      Boot's logging starter already bridges to SLF4J — so PDFBox output lands in the
+      application log with no extra configuration and no second logging backend.
+    -->
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>${pdfbox.version}</version>
+    </dependency>
+
+    <!--
+      DOCX text extraction. poi-ooxml is the OOXML (.docx) half; it pulls in poi,
+      poi-ooxml-lite and xmlbeans transitively. The legacy binary .doc format would
+      need poi-scratchpad as well and is deliberately unsupported — see FileType.
+    -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>${poi.version}</version>
+    </dependency>
+
     <!-- JUnit 5, Mockito, AssertJ, MockMvc -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -142,6 +169,25 @@
               <version>${lombok.version}</version>
             </path>
           </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-clean-plugin</artifactId>
+        <configuration>
+          <!--
+            The test suite writes real PDFs and DOCX files to build/test-uploads, because
+            testing the storage layer against a mock filesystem would not test the storage
+            layer. They are cleaned up as the tests finish, but a suite that fails partway
+            leaves files behind, so `mvn clean` removes the directory outright. Anything
+            left there is a resume, which is exactly the kind of file that must not survive
+            in a working tree by accident.
+          -->
+          <filesets>
+            <fileset>
+              <directory>build</directory>
+            </fileset>
+          </filesets>
         </configuration>
       </plugin>
     </plugins>

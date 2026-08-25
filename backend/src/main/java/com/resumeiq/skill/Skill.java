@@ -1,6 +1,7 @@
 package com.resumeiq.skill;
 
 import com.resumeiq.common.domain.BaseEntity;
+import com.resumeiq.common.text.Slug;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -20,7 +21,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.util.LinkedHashSet;
-import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -85,25 +85,13 @@ public class Skill extends BaseEntity {
     /**
      * Turns any spelling of a skill into a slug.
      *
-     * <p>Two deliberate special cases, both of which are real skills that a naive
-     * "strip punctuation" rule gets wrong. {@code +} and {@code #} are spelled out, because
-     * "C++" and "C#" would otherwise both collapse to {@code "c"} and a C# developer would be
-     * told they are missing C++. A leading dot becomes {@code "dot"}, so ".NET" is
-     * {@code "dotnet"} rather than {@code "net"} — while an interior dot stays a separator, so
-     * "Node.js" is {@code "node-js"}.
+     * <p>The rule itself lives in {@link Slug}, because the job-description and resume text
+     * pipelines need it too and neither should have to import an entity to borrow a pure
+     * function. This method stays because it is the name the rest of the domain knows it by, and
+     * because "what makes two skills the same" is a question about skills.
      */
     public static String slugify(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String lowered = raw.trim().toLowerCase(Locale.ROOT)
-                .replace("+", "plus")
-                .replace("#", "sharp");
-        if (lowered.startsWith(".")) {
-            lowered = "dot" + lowered.substring(1);
-        }
-        String hyphenated = lowered.replaceAll("[^a-z0-9]+", "-");
-        return hyphenated.replaceAll("(^-+)|(-+$)", "");
+        return Slug.of(raw);
     }
 
     /** Adds an alias in normalised form. Ignores a value equal to this skill's own slug. */

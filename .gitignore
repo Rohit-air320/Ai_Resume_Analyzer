@@ -31,6 +31,9 @@ pnpm-debug.log*
 backend/storage/
 storage/
 uploads/
+# Where the test suite writes its generated PDFs and DOCX files. `mvn clean` removes
+# it; this is the safety net for a run that failed before its own cleanup.
+build/
 
 # ---------- IDE / OS ----------
 .idea/

@@ -75,6 +75,57 @@ resumeiq:
     refresh-cookie-secure: ${REFRESH_COOKIE_SECURE:false}
     max-login-attempts: ${MAX_LOGIN_ATTEMPTS:5}
     lockout-minutes: ${LOGIN_LOCKOUT_MINUTES:15}
+  upload:
+    # Where resume files land. Server-generated names only — nothing an uploader
+    # types ever becomes part of a path. Keep this off the classpath and out of any
+    # directory the web server can serve directly.
+    storage-dir: ${RESUME_STORAGE_DIR:./storage/resumes}
+    # Same variable as spring.servlet.multipart.max-file-size above, so the container
+    # limit and the service limit are one decision instead of two that can disagree.
+    max-file-size: ${MAX_UPLOAD_SIZE:5MB}
+    # Below this many characters the file parsed but said nothing — almost always a
+    # scan or an image-only export. Rejected with an explanation, not silently scored.
+    min-extracted-characters: ${MIN_RESUME_CHARACTERS:200}
+    # A two-page resume is ~4,000 characters. This is generous and still bounded.
+    max-extracted-characters: ${MAX_RESUME_CHARACTERS:40000}
+    max-resumes-per-user: ${MAX_RESUMES_PER_USER:25}
+  posting:
+    # A job description is pasted, not uploaded, so the only real limit is length.
+    # Below this, someone copied the job title and lost the body; scoring a resume
+    # against three lines produces a confident number that means nothing.
+    min-characters: ${MIN_POSTING_CHARACTERS:200}
+    # Long postings run long at the end (benefits, EEO statements, how to apply), so
+    # cutting there keeps the requirements and drops the boilerplate.
+    max-characters: ${MAX_POSTING_CHARACTERS:20000}
+    # Higher than the resume quota: the natural loop is one resume against many postings.
+    max-per-user: ${MAX_POSTINGS_PER_USER:50}
+    # A ceiling on advice, not on data. Two hundred "important keywords" is a list
+    # nobody can act on, and presenting it as a checklist invites keyword stuffing.
+    max-keywords: ${MAX_POSTING_KEYWORDS:25}
+  ai:
+    # "mock" runs the offline writer: no network, no key, real advice composed from the
+    # deterministic findings. It is the default so a fresh clone works, and it is what
+    # the test suite uses — a suite that needs a credential is a suite nobody runs.
+    provider: ${AI_PROVIDER:mock}
+    # Backend-only. This value never reaches the browser, never appears in a response,
+    # and is never logged. A blank key means the same as provider=mock.
+    api-key: ${AI_API_KEY:}
+    base-url: ${AI_BASE_URL:https://api.anthropic.com}
+    model: ${AI_MODEL:claude-sonnet-4-20250514}
+    # A long resume against a long posting is a real amount of reading. Bounded anyway,
+    # because this call happens inside a user's request and holds a thread.
+    timeout-seconds: ${AI_TIMEOUT_SECONDS:90}
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:8000}
+    # Transient failures only (429, 5xx, timeout). Small, because somebody is watching a
+    # progress screen while this happens.
+    max-retries: ${AI_MAX_RETRIES:1}
+    # The inputs are capped where they are stored, but a prompt is several of them added
+    # together, and the sum is what costs money.
+    max-prompt-characters: ${AI_MAX_PROMPT_CHARACTERS:24000}
+    # Every score in this product is computed in Java. The model is asked for its own
+    # numbers as a second opinion only: the computed one always wins, and a gap wider
+    # than this is logged as a signal that the parser or the prompt needs a look.
+    score-tolerance: ${AI_SCORE_TOLERANCE:15}
 
 springdoc:
   swagger-ui:

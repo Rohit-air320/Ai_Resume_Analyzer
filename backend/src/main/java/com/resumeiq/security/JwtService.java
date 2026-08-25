@@ -1,5 +1,6 @@
 package com.resumeiq.security;
 
+import com.resumeiq.common.domain.Timestamps;
 import com.resumeiq.config.ResumeIqProperties;
 import com.resumeiq.config.ResumeIqProperties.Auth;
 import com.resumeiq.user.Role;
@@ -104,7 +105,7 @@ public class JwtService {
     }
 
     public String issueAccessToken(User user) {
-        return issueAccessToken(user, Instant.now());
+        return issueAccessToken(user, Timestamps.now());
     }
 
     /**

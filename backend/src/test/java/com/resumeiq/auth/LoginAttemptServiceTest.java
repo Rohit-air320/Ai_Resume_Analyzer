@@ -2,10 +2,8 @@ package com.resumeiq.auth;
 
 import com.resumeiq.common.exception.TooManyAttemptsException;
 import com.resumeiq.config.ResumeIqProperties;
-import com.resumeiq.config.ResumeIqProperties.App;
 import com.resumeiq.config.ResumeIqProperties.Auth;
-import com.resumeiq.config.ResumeIqProperties.Cors;
-import com.resumeiq.config.ResumeIqProperties.Seed;
+import com.resumeiq.support.TestProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,7 +13,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
@@ -222,10 +219,9 @@ class LoginAttemptServiceTest {
     }
 
     private static ResumeIqProperties properties() {
-        return new ResumeIqProperties(
-                new App("ResumeIQ", "0.1.0"),
-                new Cors(List.of("http://example.test")),
-                new Seed(false),
+        // Only the two throttle numbers matter here; everything else comes from the shared
+        // test defaults, so a new setting elsewhere in the record does not reach this file.
+        return TestProperties.withAuth(
                 new Auth("", 15, 7, 4, "resumeiq_rt", "Lax", false,
                         MAX_EMAIL_FAILURES, (int) LOCKOUT.toMinutes()));
     }

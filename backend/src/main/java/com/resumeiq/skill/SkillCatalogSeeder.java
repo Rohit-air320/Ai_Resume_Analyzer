@@ -15,7 +15,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Loads the skill taxonomy from {@code resources/data/skills.json} at startup.
@@ -35,6 +37,15 @@ import java.util.Set;
  * <p><b>Loud on a bad file.</b> A malformed catalogue fails startup. It is a packaged resource,
  * so a broken one is a build mistake, and the alternative — booting with an empty taxonomy — is
  * a silent, quiet degradation of every analysis the app then produces.
+ *
+ * <p><b>One transaction, one read.</b> Both {@link #run} and {@link #seed} carry
+ * {@code @Transactional}, which looks redundant and is not: {@code run} calls {@code seed} on
+ * {@code this}, and a self-invocation never passes through the proxy that applies the annotation.
+ * Without the mark on {@code run}, the startup path had no transaction at all — which a fresh
+ * database hides completely and a second start against a populated one does not, because every
+ * skill then comes back detached and reading its lazy alias set throws. The catalogue is also read
+ * in a single query with aliases fetched, rather than one lookup per entry, so a start costs one
+ * select instead of a hundred and thirty.
  */
 @Component
 public class SkillCatalogSeeder implements ApplicationRunner {
@@ -56,6 +67,7 @@ public class SkillCatalogSeeder implements ApplicationRunner {
     }
 
     @Override
+    @Transactional
     public void run(ApplicationArguments args) {
         if (!enabled) {
             log.info("Skill catalogue seeding is disabled (resumeiq.seed.skills=false)");
@@ -75,7 +87,15 @@ public class SkillCatalogSeeder implements ApplicationRunner {
     @Transactional
     public SeedResult seed() {
         List<SkillDefinition> definitions = readCatalog();
-        Set<String> takenAliases = new HashSet<>(skillRepository.findAllAliases());
+
+        // One query, aliases included. A lookup per entry was a hundred and thirty round trips at
+        // every start, and — the part that actually broke — each row came back detached whenever
+        // the caller had no transaction, so the alias check below threw LazyInitializationException.
+        Map<String, Skill> existing = skillRepository.findAllWithAliases().stream()
+                .collect(Collectors.toMap(Skill::getSlug, skill -> skill));
+        Set<String> takenAliases = existing.values().stream()
+                .flatMap(skill -> skill.getAliases().stream())
+                .collect(Collectors.toCollection(HashSet::new));
 
         int inserted = 0;
         int skipped = 0;
@@ -88,13 +108,17 @@ public class SkillCatalogSeeder implements ApplicationRunner {
                         "Skill catalogue contains an entry with no usable name: " + definition.name());
             }
 
-            Skill skill = skillRepository.findBySlug(slug).orElse(null);
+            Skill skill = existing.get(slug);
             if (skill == null) {
                 skill = Skill.builder()
                         .slug(slug)
                         .displayName(definition.name())
                         .category(definition.category())
                         .build();
+                // Into the map as well, so two catalogue entries that slugify the same way behave
+                // as they did when this read the database per entry: the second is a skip, not a
+                // duplicate insert that trips the unique index.
+                existing.put(slug, skill);
                 inserted++;
             } else {
                 skipped++;

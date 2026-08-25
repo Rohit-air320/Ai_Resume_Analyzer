@@ -24,6 +24,11 @@ import java.time.Instant;
  * need {@code createdBy} we will need Spring Data auditing and an {@code AuditorAware}, and
  * that is the moment to switch.
  *
+ * <p>The clock is {@link Timestamps#now()} rather than {@code Instant.now()}, and the difference
+ * is not cosmetic: a timestamp column keeps microseconds, the Windows clock ticks in hundreds of
+ * nanoseconds, and an untruncated entity therefore stops matching its own row the moment it is
+ * saved. See {@link Timestamps} for what that cost in practice.
+ *
  * <p>{@code equals}/{@code hashCode} follow the rules that keep entities safe inside
  * collections:
  * <ul>
@@ -56,14 +61,14 @@ public abstract class BaseEntity {
 
     @PrePersist
     void onInsert() {
-        Instant now = Instant.now();
+        Instant now = Timestamps.now();
         createdAt = now;
         updatedAt = now;
     }
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = Instant.now();
+        updatedAt = Timestamps.now();
     }
 
     /** True once the row has been persisted, which is also what makes equality meaningful. */

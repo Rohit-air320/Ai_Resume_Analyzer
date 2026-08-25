@@ -1,5 +1,6 @@
 package com.resumeiq.auth;
 
+import com.resumeiq.common.domain.Timestamps;
 import com.resumeiq.config.ResumeIqProperties;
 import com.resumeiq.user.User;
 import org.slf4j.Logger;
@@ -87,7 +88,7 @@ public class RefreshTokenService {
         enforceSessionCap(user);
         String token = generateToken();
         RefreshToken saved = refreshTokens.save(
-                RefreshToken.startFamily(user, hash(token), Instant.now().plus(lifetime)));
+                RefreshToken.startFamily(user, hash(token), Timestamps.now().plus(lifetime)));
         return new IssuedRefreshToken(token, saved.getExpiresAt());
     }
 
@@ -111,7 +112,7 @@ public class RefreshTokenService {
         }
 
         RefreshToken current = found.get();
-        Instant now = Instant.now();
+        Instant now = Timestamps.now();
 
         if (current.isRevoked()) {
             // Presented after it was spent. Assume the copy in play is not the owner's.
@@ -152,7 +153,7 @@ public class RefreshTokenService {
         }
         refreshTokens.findByTokenHash(hash(presentedToken)).ifPresent(token ->
                 refreshTokens.revokeFamily(
-                        token.getFamilyId(), RevocationReason.SIGNED_OUT, Instant.now()));
+                        token.getFamilyId(), RevocationReason.SIGNED_OUT, Timestamps.now()));
     }
 
     /**
@@ -161,13 +162,13 @@ public class RefreshTokenService {
      */
     @Transactional
     public int endAllSessions(Long userId) {
-        return refreshTokens.revokeAllForUser(userId, RevocationReason.SIGNED_OUT, Instant.now());
+        return refreshTokens.revokeAllForUser(userId, RevocationReason.SIGNED_OUT, Timestamps.now());
     }
 
     /** Removes expired rows. Wired to a schedule in a later phase; safe to call at any time. */
     @Transactional
     public int purgeExpired() {
-        return refreshTokens.deleteByExpiresAtBefore(Instant.now());
+        return refreshTokens.deleteByExpiresAtBefore(Timestamps.now());
     }
 
     /**
@@ -189,7 +190,7 @@ public class RefreshTokenService {
         List<RefreshToken> oldestFirst =
                 refreshTokens.findByUserIdAndRevokedAtIsNullOrderByCreatedAtAsc(user.getId());
         int excess = active - MAX_ACTIVE_SESSIONS + 1;
-        Instant now = Instant.now();
+        Instant now = Timestamps.now();
         for (RefreshToken token : oldestFirst.subList(0, Math.min(excess, oldestFirst.size()))) {
             // The whole family, not the single row: a rotated descendant of an evicted session
             // would otherwise keep it alive.

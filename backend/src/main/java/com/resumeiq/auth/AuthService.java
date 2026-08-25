@@ -2,6 +2,7 @@ package com.resumeiq.auth;
 
 import com.resumeiq.auth.RefreshTokenService.IssuedRefreshToken;
 import com.resumeiq.auth.RefreshTokenService.RotatedSession;
+import com.resumeiq.common.domain.Timestamps;
 import com.resumeiq.common.exception.ConflictException;
 import com.resumeiq.common.exception.ResourceNotFoundException;
 import com.resumeiq.common.exception.UnauthorizedException;
@@ -17,7 +18,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -140,7 +140,7 @@ public class AuthService {
         loginAttempts.recordSuccess(request.email(), ipAddress);
 
         User user = found.get();
-        user.setLastLoginAt(Instant.now());
+        user.setLastLoginAt(Timestamps.now());
         // Saved before the session is created: creating one can evict an older session with a
         // bulk update that clears the persistence context, and a pending change left unflushed
         // at that point would be silently discarded.

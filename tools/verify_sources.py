@@ -219,16 +219,38 @@ def verify_configs(root: Path) -> None:
         except ET.ParseError as exc:
             check("pom.xml parses", False, str(exc))
 
+    # Only SHOUTING_CASE names, which is what an environment variable looks like. A Spring
+    # property reference such as ${spring.application.name} is resolved from the config
+    # itself and has nothing to do with the deployment environment.
+    env_placeholder = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::[^}]*)?\}")
+
+    documented = set()
+    example = root / ".env.example"
+    if example.is_file():
+        for line in example.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                documented.add(stripped.split("=", 1)[0].strip())
+
     for rel in ("backend/src/main/resources/application.yml",
                 "backend/src/main/resources/application-dev.yml",
                 "backend/src/main/resources/application-mysql.yml"):
         path = root / rel
         check(f"{rel} exists", path.is_file())
         if path.is_file():
+            text = path.read_text(encoding="utf-8")
             try:
-                yaml.safe_load(path.read_text(encoding="utf-8"))
+                yaml.safe_load(text)
             except yaml.YAMLError as exc:
                 check(f"{rel} parses", False, str(exc).splitlines()[0])
+            # Every environment variable the backend reads has to be documented, because
+            # this has already been missed once: a setting lands in application.yml with a
+            # working default, nothing breaks locally, and the person deploying has no way
+            # to discover the knob exists. The reverse is deliberately not checked —
+            # .env.example is allowed to describe settings a later phase will consume.
+            for name in sorted(set(env_placeholder.findall(text))):
+                check(f".env.example documents {name}, read by {rel}", name in documented,
+                      "add it with a comment saying what it does")
 
     pkg = root / "frontend" / "package.json"
     check("frontend/package.json exists", pkg.is_file())
@@ -750,6 +772,12 @@ JAVA_LANG = {
     "UnsupportedOperationException", "Class", "Enum", "Record", "Iterable", "Comparable",
     "Override", "Deprecated", "SuppressWarnings", "FunctionalInterface", "SafeVarargs",
     "StringBuilder", "Thread", "Void", "CharSequence", "Cloneable", "AutoCloseable",
+    # Added in Phase 6. A test stub that guards its own preconditions throws AssertionError
+    # rather than a RuntimeException, precisely so that production code catching
+    # RuntimeException cannot swallow the stub's complaint — so this belongs here, and its
+    # absence was a gap in this list rather than a finding in the tests.
+    "AssertionError", "ArithmeticException", "ClassCastException", "NumberFormatException",
+    "IndexOutOfBoundsException", "Runnable", "StackOverflowError",
 }
 
 
@@ -994,6 +1022,350 @@ def verify_java_imports(root: Path) -> None:
                 continue
             check(f"{rel} resolves the type {name}", name in visible,
                   "no import, no local declaration, not in the same package")
+
+
+# ---------------------------------------------------------------------------
+# Two mistakes the compiler is perfectly happy with: a duplicate entry in a
+# Set.of(...) literal, which throws when the class is first touched, and a
+# common/ class importing a feature package, which quietly inverts the
+# dependency the packages are arranged around.
+# ---------------------------------------------------------------------------
+
+# The product's own packages. Everything else under com.resumeiq — common, config,
+# security, support — is machinery these are built from, and may be imported freely.
+FEATURE_PACKAGES = ("analysis", "auth", "jobdescription", "recommendation", "resume",
+                    "skill", "user")
+
+
+def where(source: str, index: int) -> str:
+    """Names the field a literal belongs to, falling back to a line number.
+
+    The field name is the better label by a distance. Line numbers here come from the
+    comment-stripped source — a block comment is consumed newlines and all — so they run
+    ahead of the file by however much javadoc sits above the code, which is a lot in this
+    project. ``ENGLISH`` is unambiguous and greppable; ``:8`` sends the reader to the
+    wrong place.
+    """
+    prefix = source[:index]
+    # Back to the end of the previous statement or block, so a field's own declaration is
+    # all that is searched and the assignment before it cannot be picked up by mistake.
+    names = re.findall(r"(\w+)\s*=", re.split(r"[;{}]", prefix)[-1])
+    return names[-1] if names else f"line {prefix.count(chr(10)) + 1}"
+
+
+def verify_immutable_collections(root: Path) -> None:
+    """Catches a repeated entry in a ``Set.of`` or ``Map.of`` literal.
+
+    ``Set.of("a", "b", "a")`` compiles and then throws ``IllegalArgumentException`` the
+    first time the class is loaded. In a static field that arrives as an
+    ``ExceptionInInitializerError`` raised from whatever unrelated line happened to touch
+    the class first, and the message names the duplicate without naming the field.
+
+    Worth a check because this project has exactly the shape that grows one: the stopword
+    lists and the capitalisation rules are long alphabetised ``Set.of`` literals, spread
+    over a dozen lines, and a word can be added to one twice without a reviewer seeing it.
+    """
+    for path in sorted((root / "backend" / "src").rglob("*.java")):
+        rel = path.relative_to(root).as_posix()
+        # Strings are kept, because their contents are the thing being compared here.
+        source = read_cleaned(path, keep_strings=True)
+        for match in re.finditer(r"\b(Set|Map)\s*\.\s*of\s*\(", source):
+            args = enclosed_text(source, match.end() - 1)
+            if args is None:
+                continue
+            entries = [entry.strip() for entry in split_top_level(args)]
+            if match.group(1) == "Map":
+                entries = entries[::2]  # keys only — a repeated value is legal
+            # Only whole string literals. A comma inside one would split it into two
+            # fragments, neither of which matches this, so the entry is skipped rather
+            # than mistaken for something.
+            literals = [entry for entry in entries
+                        if re.fullmatch(r'"(?:[^"\\]|\\.)*"', entry)]
+            duplicates = sorted({entry for entry in literals if literals.count(entry) > 1})
+            check(f"{rel} {where(source, match.start())} lists nothing twice",
+                  not duplicates,
+                  f"{', '.join(duplicates)} appears more than once, which throws "
+                  f"IllegalArgumentException when the class initialises")
+
+
+def verify_layering(root: Path) -> None:
+    """Keeps ``common/`` from importing the features that are built on it.
+
+    The direction is the whole point of having the package: ``PlainText`` and
+    ``Stopwords`` are used by resumes, postings and analyses alike, and the moment one of
+    them imports ``com.resumeiq.jobdescription`` the dependency runs both ways. Nothing
+    breaks that day. What breaks is later, when the shared class cannot be reasoned about
+    or moved without dragging a feature along with it, and when a test of a pure text
+    helper needs a posting to construct.
+
+    A compiler cannot see this. Cycles between packages are legal Java, so the rule has to
+    be written down somewhere that fails.
+    """
+    common = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq" / "common"
+    files = sorted(common.rglob("*.java"))
+    check("backend has shared common/ sources", bool(files))
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        for imported in re.findall(r"^import\s+(?:static\s+)?([\w.]+);",
+                                   read_source(path), re.MULTILINE):
+            feature = re.fullmatch(r"com\.resumeiq\.(\w+)\..*", imported)
+            offender = feature.group(1) if feature else ""
+            check(f"{rel} imports no feature package",
+                  offender not in FEATURE_PACKAGES,
+                  f"imports {imported}, but common/ is what the features are built from — "
+                  f"the dependency has to run one way")
+
+
+# ---------------------------------------------------------------------------
+# Spring proxy semantics. These are the mistakes that compile, start, and then
+# behave differently from what the annotations say — the ones a reader trusts.
+# ---------------------------------------------------------------------------
+
+BLOCK_KEYWORDS = {"if", "else", "for", "while", "switch", "case", "try", "catch", "finally",
+                  "do", "synchronized", "return", "new"}
+
+CALL_PREFIX = re.compile(r"(?:^|[=(,;{}!&|?:+\-*/]|\breturn|\bthrow|\byield)\s*$")
+
+
+def enclosing_method(source: str, index: int) -> str | None:
+    """Names the method whose body contains ``index``.
+
+    Works on brace depth rather than a signature regex, because a method signature in this
+    codebase can span three lines and carry generics, and a regex that reads those reliably
+    is a Java parser. The open braces before ``index`` are the chain of blocks the position
+    sits inside; walking that chain from the innermost outwards and taking the first
+    identifier before a ``(`` that is not a control-flow keyword lands on the method.
+    """
+    stack: list[int] = []
+    for brace in re.finditer(r"[{}]", source[:index]):
+        if brace.group() == "{":
+            stack.append(brace.start())
+        elif stack:
+            stack.pop()
+    for open_brace in reversed(stack):
+        header = source[max(0, open_brace - 400):open_brace]
+        name = re.search(r"(\w+)\s*\([^()]*\)\s*(?:throws\s[\w.,\s]+)?$", header)
+        if name and name.group(1) not in BLOCK_KEYWORDS:
+            return name.group(1)
+    return None
+
+
+def method_bodies(source: str) -> list[tuple[str, int, int]]:
+    """Every method body in a cleaned Java source, as ``(name, start, end)`` offsets.
+
+    Brace matching again rather than a signature regex — same reason as
+    :func:`enclosing_method`. A ``{`` starts a method body when the text before it ends in a
+    parameter list whose name is not a control-flow keyword, which also excludes a lambda's
+    own block (preceded by ``->``) and an initialiser block.
+    """
+    bodies: list[tuple[str, int, int]] = []
+    for brace in re.finditer(r"\{", source):
+        header = source[max(0, brace.start() - 400):brace.start()]
+        name = re.search(r"(\w+)\s*\([^()]*\)\s*(?:throws\s[\w.,\s]+)?$", header)
+        if not name or name.group(1) in BLOCK_KEYWORDS:
+            continue
+        depth = 0
+        for token in re.finditer(r"[{}]", source[brace.start():]):
+            depth += 1 if token.group() == "{" else -1
+            if depth == 0:
+                bodies.append((name.group(1), brace.end(),
+                               brace.start() + token.start()))
+                break
+    return bodies
+
+
+def lambda_bodies(body: str) -> list[tuple[set[str], str]]:
+    """Each lambda in a method, as ``(parameter names, body text)``.
+
+    The parameters matter as much as the body. ``existing.values().stream().map(skill -> skill)``
+    mentions ``skill``, and if a local named ``skill`` is declared later in the same method
+    the two have nothing to do with each other — the lambda's own parameter shadows nothing
+    and captures nothing. Reporting that pair is the one false positive this check would
+    otherwise produce, and it appears in real code (``SkillCatalogSeeder.seed``).
+    """
+    found: list[tuple[set[str], str]] = []
+    for arrow in re.finditer(r"->", body):
+        before = body[:arrow.start()].rstrip()
+        names: set[str] = set()
+        if before.endswith(")"):
+            depth = 0
+            for position in range(len(before) - 1, -1, -1):
+                if before[position] == ")":
+                    depth += 1
+                elif before[position] == "(":
+                    depth -= 1
+                    if depth == 0:
+                        for part in split_top_level(before[position + 1:-1]):
+                            words = re.findall(r"\w+", part)
+                            if words:
+                                names.add(words[-1])
+                        break
+        else:
+            trailing = re.search(r"(\w+)$", before)
+            if trailing:
+                names.add(trailing.group(1))
+
+        rest = body[arrow.end():]
+        stripped = rest.lstrip()
+        if stripped.startswith("{"):
+            depth = 0
+            for position, character in enumerate(stripped):
+                if character == "{":
+                    depth += 1
+                elif character == "}":
+                    depth -= 1
+                    if depth == 0:
+                        found.append((names, stripped[1:position]))
+                        break
+            else:
+                found.append((names, stripped))
+            continue
+        # An expression lambda ends where its enclosing call does: the first comma or closing
+        # bracket that is not nested inside one of its own.
+        depth = 0
+        for position, character in enumerate(rest):
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                if depth == 0:
+                    found.append((names, rest[:position]))
+                    break
+                depth -= 1
+            elif character in ",;" and depth == 0:
+                found.append((names, rest[:position]))
+                break
+        else:
+            found.append((names, rest))
+    return found
+
+
+def verify_lambda_captures(root: Path) -> None:
+    """Forbids capturing a local that is assigned more than once.
+
+    Java requires a captured local to be effectively final, and this is the error that got
+    past the harness in Phase 5: ``SectionSplitter.headingIn`` computed ``label``, tidied it
+    with ``label = TRAILING_MARKUP...``, and then read it inside two lambdas on
+    ``Optional``. Perfectly readable, obviously correct, and it does not compile.
+
+    Reassignment is what to look for rather than the capture itself, because the fix is
+    always the same shape: assign once into a new name. Locals and parameters are collected
+    per method body; a name declared with a type (or ``var``) in the body, assigned again at
+    a statement boundary, and mentioned inside a lambda in the same method is reported.
+    Nothing here understands scope, so a name reused in two sibling blocks is one finding
+    rather than two — which is the right side to err on, since each one is a real compile
+    error to go and look at.
+    """
+    for base in ("main", "test"):
+        for path in sorted((root / "backend" / "src" / base).rglob("*.java")):
+            source = read_cleaned(path)
+            rel = path.relative_to(root).as_posix()
+            for name, start, end in method_bodies(source):
+                body = source[start:end]
+                lambdas = lambda_bodies(body)
+                if not lambdas:
+                    continue
+                declared = {
+                    match.group(2) for match in re.finditer(
+                        r"(?:[;{}(]|^)\s*(?:final\s+)?"
+                        r"(var|[A-Za-z_$][\w.$]*(?:\s*<[^;{}]*?>)?(?:\s*\[\s*\])*)"
+                        r"\s+([a-z_$]\w*)\s*(?:=[^=]|;|\)|,)", body)
+                }
+                reassigned = {
+                    match.group(1) for match in re.finditer(
+                        r"(?:[;{}]|\)\s*|^)\s*([a-z_$]\w*)\s*"
+                        r"(?:=[^=]|\+=|-=|\*=|/=|\|=|&=|\+\+|--)", body)
+                }
+                for local in sorted(declared & reassigned):
+                    captured = [text for parameters, text in lambdas
+                                if local not in parameters
+                                and re.search(r"(?<![.\w])" + re.escape(local) + r"\b", text)]
+                    check(f"{rel} {name}() captures only effectively final locals",
+                          not captured,
+                          f"'{local}' is assigned more than once and then read inside a "
+                          f"lambda — Java requires a captured local to be effectively final, "
+                          f"so assign the final value once into its own name")
+
+
+def verify_stored_timestamps(root: Path) -> None:
+    """Requires one clock in ``src/main``, at the precision a column can hold.
+
+    ``Instant.now()`` returns whatever the platform clock offers — microseconds on most Linux
+    hosts, 100-nanosecond ticks on Windows — while every timestamp column here is
+    ``TIMESTAMP(6)``/``DATETIME(6)``. So an entity saved with nanosecond digits no longer
+    equals the row it produced, ``POST`` and ``GET`` disagree about the same ``createdAt``,
+    and the test that catches it passes on one machine and fails on another. That is exactly
+    how this reached the Phase 5 gate.
+
+    ``Timestamps.now()`` truncates once, at the source. The rule is absolute rather than
+    scoped to entities: a rule with exceptions needs a list of them, and the next author
+    would have to know which values eventually reach a column. Timing code wants
+    ``System.nanoTime()``, which is untouched by this. Tests may still call ``Instant.now()``
+    freely — a fixed instant in a test is not written by this clock.
+    """
+    clock = root / "backend/src/main/java/com/resumeiq/common/domain/Timestamps.java"
+    check("Timestamps is the one clock in src/main", clock.is_file(),
+          "common/domain/Timestamps.java is missing")
+    if clock.is_file():
+        source = read_cleaned(clock)
+        check("Timestamps truncates to the precision a column keeps",
+              "ChronoUnit.MICROS" in source and "truncatedTo(STORED_PRECISION)" in source,
+              "now() must truncate to MICROS — DATETIME(6) keeps six fractional digits")
+
+    for path in sorted((root / "backend" / "src" / "main").rglob("*.java")):
+        if path == clock:
+            continue  # the one place allowed to read the platform clock
+        source = read_cleaned(path)
+        rel = path.relative_to(root).as_posix()
+        check(f"{rel} takes the time from Timestamps",
+              not re.search(r"(?<![.\w])Instant\s*\.\s*now\s*\(", source),
+              "Instant.now() can carry more precision than a timestamp column keeps; call "
+              "Timestamps.now() so an entity matches its own row")
+
+
+def verify_transactional_self_invocation(root: Path) -> None:
+    """Forbids a class calling its own ``@Transactional`` method from an untransacted one.
+
+    Spring applies ``@Transactional`` with a proxy that wraps the bean. A call from outside
+    goes through the proxy and starts a transaction; a call from *inside* the class goes
+    straight to the target object, and the annotation is simply not there. The method runs
+    with whatever transaction the caller had, which in the case that started this check was
+    none at all.
+
+    That is the exact bug ``SkillCatalogSeeder`` shipped with: ``run`` called ``seed`` on
+    ``this``, so startup seeding had no transaction, every entity it loaded came back
+    detached, and reading a lazy ``@ElementCollection`` on one of them threw. An empty
+    database hid it completely — the failure needed rows that already existed, which means
+    it would have appeared on the *second* start of a real deployment.
+
+    Nothing about it is a compile error, and no slice test reaches it. So the rule is: if a
+    method calls a ``@Transactional`` method of its own class, the caller must be
+    ``@Transactional`` too. Callers are matched by name, so an overloaded pair where only one
+    half is annotated reads as safe here — a limitation worth knowing rather than a reason to
+    parse Java properly.
+    """
+    for path in sorted((root / "backend" / "src" / "main").rglob("*.java")):
+        source = read_cleaned(path)
+        if re.search(r"\b(?:interface|@interface)\s+\w+", source):
+            continue  # Spring Data writes the implementation; there is no body to self-call from
+        transactional = {
+            match.group(1)
+            for match in re.finditer(
+                r"@Transactional\b[^\n]*\n(?:\s*@\w+[^\n]*\n)*[^\n=;]*?\b(\w+)\s*\(", source)
+        }
+        rel = path.relative_to(root).as_posix()
+        for name in sorted(transactional):
+            pattern = r"(?<![.\w])(?:this\s*\.\s*)?" + re.escape(name) + r"\s*\("
+            for call in re.finditer(pattern, source):
+                line_start = source.rfind("\n", 0, call.start()) + 1
+                if not CALL_PREFIX.search(source[line_start:call.start()]):
+                    continue  # a declaration, or a call on another object
+                caller = enclosing_method(source, call.start())
+                check(f"{rel} {caller or '?'}() reaches {name}() through the proxy",
+                      caller in transactional,
+                      f"line {source.count(chr(10), 0, call.start()) + 1} calls its own "
+                      f"@Transactional {name}(), and {caller or 'the caller'} is not "
+                      f"@Transactional — a self-invocation skips the proxy, so {name}() runs "
+                      f"with no transaction of its own")
 
 
 # ---------------------------------------------------------------------------
@@ -1418,6 +1790,48 @@ def slugify(raw: str) -> str:
     return re.sub(r"(^-+)|(-+$)", "", re.sub(r"[^a-z0-9]+", "-", lowered))
 
 
+# Methods that read perfectly on an Optional assertion and exist nowhere near one.
+# AssertJ's OptionalAssert inherits from none of the iterable, array or char-sequence
+# hierarchies, so each of these is a compile error. The list is short and specific on
+# purpose: it records mistakes actually made rather than guessing at an API surface.
+NOT_ON_OPTIONAL_ASSERT = (
+    "doesNotContain", "containsExactly", "containsOnly", "containsAnyOf",
+    "containsAll", "hasSize", "doesNotContainNull",
+)
+
+
+def verify_assertions(root: Path) -> None:
+    """Catches AssertJ calls that read well and do not compile.
+
+    ``assertThat(anOptional)`` returns an ``OptionalAssert``, which has ``contains`` but
+    not ``doesNotContain`` — so the obvious partner to a method that does exist is a
+    compile error, and one that survives review because the line says what it means.
+    """
+    test_files = sorted((root / "backend" / "src" / "test").rglob("*Test.java"))
+    check("backend has test sources", bool(test_files))
+    for path in test_files:
+        rel = path.relative_to(root).as_posix()
+        body = read_cleaned(path)
+        # AssertJ swapped catchThrowableOfType's argument order after the 3.24.2 that Spring
+        # Boot 3.2.5 pins, so a call that compiles today breaks on the next Boot bump with a
+        # confusing error. catchThrowable(...) + isInstanceOf(...) says the same thing and
+        # survives the change.
+        check(f"{rel} uses catchThrowable rather than catchThrowableOfType",
+              "catchThrowableOfType" not in body,
+              "its argument order changed after AssertJ 3.24.2")
+
+        # Only locals and fields with a written-out Optional type; a var or a chained
+        # call is out of reach here, and a check that guesses is worse than none.
+        optionals = sorted(set(re.findall(r"\bOptional<[^>]+>\s+(\w+)\s*=", body)))
+        for name in optionals:
+            for method in NOT_ON_OPTIONAL_ASSERT:
+                pattern = (r"assertThat\(\s*" + re.escape(name) + r"\s*\)\s*\.\s*"
+                           + method + r"\b")
+                check(f"{rel} calls no {method}() on Optional '{name}'",
+                      re.search(pattern, body) is None,
+                      f"assertThat({name}) is an OptionalAssert and has no {method}()")
+
+
 def verify_skill_catalog(root: Path) -> None:
     catalog = root / "backend" / "src" / "main" / "resources" / "data" / "skills.json"
     enum_file = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq" / "skill" / "SkillCategory.java"
@@ -1493,9 +1907,15 @@ def main() -> int:
     verify_bean_construction(root)
     verify_record_arity(root)
     verify_java_imports(root)
+    verify_immutable_collections(root)
+    verify_layering(root)
+    verify_transactional_self_invocation(root)
+    verify_lambda_captures(root)
+    verify_stored_timestamps(root)
     verify_persistence(root)
     verify_repositories(root)
     verify_derived_queries(root)
+    verify_assertions(root)
     verify_skill_catalog(root)
     verify_frontend(root)
     verify_js_syntax(root)
