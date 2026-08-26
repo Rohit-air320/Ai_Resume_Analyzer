@@ -122,9 +122,10 @@ page contains a copy of either. The API still authorises every request on its ow
 decides what to draw.
 
 Navigation is data, not markup. `components/layout/navItems.js` lists every destination with a
-`ready` flag, and the four that Phase 9 and later will build render as disabled rows with a "Soon"
-chip. The alternative — linking to routes that do not exist yet — teaches people that the sidebar
-lies, and the alternative to that, shipping four empty pages, is worse.
+`ready` flag, and the ones a later phase will build render as disabled rows with a "Soon" chip. The
+alternative — linking to routes that do not exist yet — teaches people that the sidebar lies, and
+the alternative to that, shipping empty pages, is worse. Skill Gap and Recommendations flipped to
+`ready` in Phase 9; Settings is the last row still waiting.
 
 There is no data-fetching library. `lib/useResource.js` is about forty lines and returns
 `{status, data, error, reload, setData}`, which is everything these screens need: they load once
@@ -144,13 +145,77 @@ cannot know how far through it the server is, so the screen names the stages the
 performs and counts elapsed seconds. A bar that fills on a timer is a lie that gets found out the
 first time a model run is slow.
 
-Charts are deliberately late. Every number on the results page and the dashboard is readable as
-text or as a labelled `meter` first, and the dashboard's score history is thirty CSS columns rather
-than a charting library — Recharts arrives in Phase 9 for the views where the shape of the data is
-the information. A chart should add pattern to something already legible, not be the only way to
-read a score.
+## Charts, and why every one of them ships a table
 
-## Error contract
+Charts arrived late on purpose. Phases 8 and earlier made every number readable as text or as a
+labelled `meter` first, and Phase 9 added Recharts only for the four views where the shape of the
+data is itself the information: score history over time, coverage split by how much a posting
+weighted each requirement, the eight section scores as one outline, and how often the same
+requirement has come back missing. A chart here adds pattern to something already legible. Delete
+every chart in the product and no page loses a fact.
+
+`components/charts/ChartFrame.jsx` is the reason that claim holds. It renders the figure, hides the
+drawing with `aria-hidden`, and renders the same numbers as an `sr-only` `<table>` whose caption is
+the figure's accessible name — and `columns` and `rows` are required props, so a chart cannot be
+added without its text alternative. That is a stronger guarantee than a code review convention: the
+component will not render without it.
+
+The same decision makes the charts testable. Recharts measures its container through a
+`ResizeObserver`, jsdom has neither the observer nor a layout engine, so in tests the container has
+zero size and no SVG is produced at all. Asserting on a `<path>` would be asserting on nothing.
+The chart tests read the table instead, which means the assertions are about what a screen reader
+receives rather than about pixels — the accessible version and the testable version are the same
+artifact. `src/test/setup.js` supplies a no-op `ResizeObserver` so mounting a chart does not throw.
+
+Chart colours are CSS custom properties, not hex literals. `lib/chartTokens.js` resolves them as
+`rgb(var(--brand-600))`, which is a legal SVG paint, so the charts follow the `.dark` class with no
+JavaScript listening for a theme change and no second palette to keep in sync.
+
+The match rail on the results page is not a chart. Requirements are grouped by the posting's own
+emphasis and ordered unmet-first, and a requirement with no evidence behind it gets a *broken*
+connector — the line is the data, not decoration over it. Nothing in the rail is drawn to a scale,
+so nothing about it needs a table.
+
+## The public pages, and one report
+
+Four routes are readable without a session: `/` explains the product, `/demo` shows a whole
+analysis, `/system-check` proves the browser can reach the API, and anything unmatched renders
+`NotFound`. All four share `components/marketing/SiteHeader.jsx` and `SiteFooter.jsx`, and the
+header reads the session only to swap its call to action — a signed-in visitor sees "Open your
+dashboard" instead of two sign-up buttons and is never redirected. Bouncing somebody off the
+landing page because they happen to be signed in makes the marketing copy unreachable to the only
+people who can check whether it is true, and it breaks a shared link. The catch-all names the path
+it could not match rather than redirecting to `/`, because a silent redirect leaves the reader
+unsure whether they mistyped something or followed a dead link.
+
+The demo is the signed-in results page with a different data source. Phase 10 lifted the whole
+presentational body of a result out of `pages/AnalysisDetail.jsx` into
+`components/analysis/AnalysisReport.jsx`, which takes a document and returns markup — no router
+params, no request, no loading states. `/analyses/:id` hands it a fetch and `/demo` hands it
+`features/demo/demoAnalysis.js`. That is the only arrangement in which the demo cannot rot: a
+section added to the report appears in the shop window on the same commit, and there is no second
+copy of the markup for a later phase to forget. The same move deleted the hand-written match rail
+that the sign-in sidebar had been carrying since Phase 3.
+
+The fixture is a saved document rather than an anonymous endpoint. Nothing about a real user's
+resume can appear on a public page by accident, there is no unauthenticated read path to rate-limit
+or secure, and the demo works with the backend switched off — which is the state a reviewer opening
+this project for the first time is in. The cost of a fixture is that it can drift from the API, so
+`verify_demo_fixture` in `tools/verify_sources.py` checks it in both directions against
+`AnalysisResponse` and its nested records, then checks the things a hand-written document gets
+wrong: that the breakdown's earned column sums to the overall score and its `outOf` column to 100,
+that every skill status and importance is a real enum constant, that the skill and keyword lists
+carry the API's sort order, that all eight sections are present in document order, and that every
+suggested keyword is genuinely absent from the resume and arrives with a placement. A renamed field
+or a demo that quietly stopped adding up fails the build instead of the reader's trust.
+
+The landing page publishes the scale from `lib/scoreBands.js` and renders the live `MatchRail` on
+that fixture, so its hero is the product rather than a picture of one and it cannot advertise
+thresholds the app does not use. Its least template-like section is the one listing what the tool
+will not do — invent experience, stuff keywords, change your facts — and each of those lines
+describes the architecture rather than an intention: the findings are computed before a model is
+contacted, and `AdviceSanitiser` discards anything the model invents on the way back.
+
 
 Every failure returns the same JSON envelope with a stable `code` from the `ErrorCode`
 enum. The frontend maps codes to copy, so error text can change without breaking clients,

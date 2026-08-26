@@ -501,32 +501,330 @@ def verify_tokens(root: Path) -> None:
 # Cross-stack: the frontend may only read fields the backend actually returns
 # ---------------------------------------------------------------------------
 
-def verify_contract(root: Path) -> None:
-    record = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq" / "health" / "HealthResponse.java"
-    page = root / "frontend" / "src" / "pages" / "SystemCheck.jsx"
-    check("HealthResponse.java exists", record.is_file())
-    check("SystemCheck.jsx exists", page.is_file())
-    if not (record.is_file() and page.is_file()):
-        return
+# A page reads one DTO through one variable, so the pair is (that variable, that record).
+# The failure this catches is the quietest one in a JavaScript client: `result.sectionScore`
+# for a field named `sectionScores` is not a crash, it is `undefined`, which renders as an
+# empty section that looks like "the API sent nothing" forever. There is no type checker
+# here to notice, and a test only notices if its fixture is built from the real record.
+#
+# Adding a pair costs one line, and every screen that reads a DTO should have one.
+CONTRACT_PAIRS = [
+    # (label, record file under com/resumeiq, record name, page under frontend/src, accessor)
+    ("SystemCheck", "health/HealthResponse.java", "HealthResponse",
+     "pages/SystemCheck.jsx", r"\bhealth\??\.(\w+)"),
+    ("AnalysisDetail", "analysis/AnalysisResponse.java", "AnalysisResponse",
+     "pages/AnalysisDetail.jsx", r"\bresult\??\.(\w+)"),
+    ("AnalysisReport", "analysis/AnalysisResponse.java", "AnalysisResponse",
+     "components/analysis/AnalysisReport.jsx", r"\bresult\??\.(\w+)"),
+    ("SkillGap", "analysis/AnalysisResponse.java", "AnalysisResponse",
+     "pages/SkillGap.jsx", r"\bresult\??\.(\w+)"),
+    ("Recommendations", "recommendation/RecommendationResponse.java", "RecommendationResponse",
+     "pages/Recommendations.jsx", r"\bitem\??\.(\w+)"),
+]
 
-    body = record.read_text(encoding="utf-8")
-    header = re.search(r"public\s+record\s+HealthResponse\s*\(([\s\S]*?)\)\s*\{", body)
-    check("HealthResponse declares a record header", header is not None)
+
+def record_fields(path: Path, name: str) -> set[str] | None:
+    """Component names from a record header, or None if it cannot be found.
+
+    Nested records are declared inside the outer one, so the pattern is anchored to
+    `public record <name>` and takes the first match — `Target` inside `AnalysisResponse`
+    is a different name and so cannot be picked up by accident.
+    """
+    header = re.search(rf"public\s+record\s+{name}\s*\(([\s\S]*?)\)\s*\{{",
+                       path.read_text(encoding="utf-8"))
     if not header:
-        return
-    fields = {re.split(r"\s+", part.strip())[-1] for part in header.group(1).split(",") if part.strip()}
+        return None
+    return {re.split(r"\s+", part.strip())[-1]
+            for part in header.group(1).split(",") if part.strip()}
 
-    used = set(re.findall(r"\bhealth\??\.(\w+)", page.read_text(encoding="utf-8")))
-    for field in sorted(used):
-        check(f"SystemCheck reads health.{field} which the API returns", field in fields,
-              f"HealthResponse has {sorted(fields)}")
 
-    # And the slice test must assert against the same field names.
+def verify_contract(root: Path) -> None:
+    java = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq"
+    src = root / "frontend" / "src"
+
+    for label, record_rel, name, page_rel, accessor in CONTRACT_PAIRS:
+        record = java / record_rel
+        page = src / page_rel
+        check(f"{record_rel} exists", record.is_file())
+        check(f"{page_rel} exists", page.is_file())
+        if not (record.is_file() and page.is_file()):
+            continue
+
+        fields = record_fields(record, name)
+        check(f"{name} declares a record header", fields is not None)
+        if fields is None:
+            continue
+
+        used = set(re.findall(accessor, page.read_text(encoding="utf-8")))
+        check(f"{label} reads at least one field of {name}", len(used) > 0,
+              f"accessor {accessor} matched nothing — has the variable been renamed?")
+        for field in sorted(used):
+            check(f"{label} reads a {name}.{field} that the API returns", field in fields,
+                  f"{name} has {sorted(fields)}")
+
+    # And the health slice test must assert against the same field names.
+    fields = record_fields(java / "health" / "HealthResponse.java", "HealthResponse") or set()
     test = root / "backend" / "src" / "test" / "java" / "com" / "resumeiq" / "health" / "HealthControllerTest.java"
-    if test.is_file():
+    if test.is_file() and fields:
         asserted = set(re.findall(r"jsonPath\(\"\$\.(\w+)", test.read_text(encoding="utf-8")))
         for field in sorted(asserted):
             check(f"HealthControllerTest asserts on health.{field}", field in fields)
+
+
+# ---------------------------------------------------------------------------
+# The demo fixture: the one API document in this repo written by hand.
+#
+# Everything else the frontend renders came off the wire, so a field that does not exist
+# simply is not there. The fixture is the opposite — it can claim any shape at all, and a
+# wrong one produces a demo page with a section quietly missing, which nobody notices
+# because there is no server to disagree with it. So it is checked against the record it
+# imitates, in both directions: a component absent from the fixture is a section the demo
+# does not show, and a key absent from the record is a field the demo invented.
+#
+# The arithmetic is checked too. A published breakdown whose parts do not add up to the
+# score above it is worse than no breakdown, and this is the only analysis in the product
+# that no engine computed.
+# ---------------------------------------------------------------------------
+
+# (fixture field, nested record inside AnalysisResponse, is it a list)
+FIXTURE_SHAPES = [
+    ("target", "Target", False),
+    ("provenance", "Provenance", False),
+    ("scoreBreakdown", "ScoreReason", True),
+    ("detectedSkills", "SkillFinding", True),
+    ("missingSkills", "SkillFinding", True),
+    ("suggestedKeywords", "KeywordSuggestion", True),
+    ("sectionScores", "SectionScore", True),
+    ("improvements", "Advice", True),
+    ("recommendedProjects", "Advice", True),
+    ("learningRecommendations", "Advice", True),
+]
+
+FIXTURE_SCORES = ["overallScore", "atsScore", "jobMatchScore", "skillsMatchScore",
+                  "keywordScore", "experienceScore"]
+
+FIXTURE_ADVICE = ["improvements", "recommendedProjects", "learningRecommendations"]
+
+ENUM_FILES = {
+    "AnalysisStatus": "analysis/AnalysisStatus.java",
+    "SkillStatus": "analysis/SkillStatus.java",
+    "SkillImportance": "analysis/SkillImportance.java",
+    "ResumeSection": "analysis/ResumeSection.java",
+    "Priority": "recommendation/Priority.java",
+}
+
+# Every public surface has to read the fixture rather than keep its own copy of the numbers.
+FIXTURE_READERS = ["pages/Landing.jsx", "pages/Demo.jsx", "features/auth/AuthLayout.jsx"]
+
+
+def enum_constants(path: Path, name: str) -> list[str]:
+    """Constant names in declaration order. Comments are blanked first, so prose cannot match."""
+    source = blank_noise(read_source(path))
+    opened = re.search(rf"enum\s+{name}\s*\{{", source)
+    if not opened:
+        return []
+    body = source[opened.end():]
+    cut = body.find(";")
+    if cut >= 0:
+        body = body[:cut]
+    return re.findall(r"(?m)^\s*([A-Z][A-Z0-9_]*)\s*(?:,|\}|$)", body)
+
+
+def load_js_constant(path: Path, name: str):
+    """Evaluate one exported constant with node and bring it back as Python data.
+
+    A regex could not read this safely — the fixture is nested object literals with prose in
+    them — and node is the same interpreter the browser will use, so what comes back here is
+    exactly what the page will render.
+    """
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        warn("node is unavailable, so the demo fixture was not evaluated")
+        return None
+
+    scratch = Path(tempfile.mkdtemp())
+    try:
+        (scratch / "fixture.mjs").write_text(read_source(path), encoding="utf-8")
+        runner = scratch / "dump.mjs"
+        runner.write_text(
+            f"import {{ {name} }} from './fixture.mjs'\n"
+            f"process.stdout.write(JSON.stringify({name}))\n",
+            encoding="utf-8")
+        result = subprocess.run(["node", str(runner)], capture_output=True, text=True, cwd=scratch)
+        if result.returncode != 0:
+            check(f"{name} can be imported", False,
+                  (result.stderr or "").strip().splitlines()[-1:] or "node failed")
+            return None
+        return json.loads(result.stdout)
+    except (OSError, json.JSONDecodeError) as error:
+        check(f"{name} evaluates to JSON-serialisable data", False, str(error))
+        return None
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def verify_demo_fixture(root: Path) -> None:
+    src = root / "frontend" / "src"
+    fixture_rel = "features/demo/demoAnalysis.js"
+    path = src / fixture_rel
+    java = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq"
+    record = java / "analysis" / "AnalysisResponse.java"
+
+    check(f"{fixture_rel} exists", path.is_file())
+    if not (path.is_file() and record.is_file()):
+        return
+
+    for reader in FIXTURE_READERS:
+        target = src / reader
+        if not target.is_file():
+            check(f"{reader} exists", False)
+            continue
+        check(f"{reader} reads the shared demo fixture",
+              "demo/demoAnalysis.js" in read_source(target),
+              "a second copy of the demo numbers is a copy that will go stale")
+
+    data = load_js_constant(path, "DEMO_ANALYSIS")
+    if data is None:
+        return
+    check("DEMO_ANALYSIS is an object", isinstance(data, dict))
+    if not isinstance(data, dict):
+        return
+
+    top = record_fields(record, "AnalysisResponse")
+    check("AnalysisResponse declares a record header", top is not None)
+    if top is None:
+        return
+
+    absent = sorted(top - set(data))
+    check("the demo fixture carries every AnalysisResponse component", not absent,
+          f"the demo would render these as undefined: {absent}")
+    invented = sorted(set(data) - top)
+    check("the demo fixture invents no field", not invented, f"not on the record: {invented}")
+
+    # Nested shapes, both directions again.
+    for field, name, is_list in FIXTURE_SHAPES:
+        nested = record_fields(record, name)
+        check(f"AnalysisResponse.{name} declares a record header", nested is not None)
+        if nested is None:
+            continue
+
+        value = data.get(field)
+        check(f"the fixture's {field} is {'a list' if is_list else 'an object'}",
+              isinstance(value, list) if is_list else isinstance(value, dict))
+        rows = value if isinstance(value, list) else ([value] if isinstance(value, dict) else [])
+        for index, row in enumerate(rows):
+            label = f"{field}[{index}]" if is_list else field
+            if not isinstance(row, dict):
+                check(f"{label} is an object", False)
+                continue
+            wrong = sorted(set(row) - nested)
+            check(f"{label} uses only {name} components", not wrong, f"not on {name}: {wrong}")
+            short = sorted(nested - set(row))
+            check(f"{label} carries every {name} component", not short, f"absent: {short}")
+
+    constants: dict[str, list[str]] = {}
+    for name, rel in ENUM_FILES.items():
+        enum_path = java / rel
+        constants[name] = enum_constants(enum_path, name) if enum_path.is_file() else []
+        check(f"{name} constants could be read", bool(constants[name]))
+    if not all(constants.values()):
+        return
+
+    check("the fixture's status is an AnalysisStatus value",
+          data.get("status") in constants["AnalysisStatus"], f"got {data.get('status')!r}")
+
+    for field in FIXTURE_SCORES:
+        value = data.get(field)
+        check(f"the fixture's {field} is a whole number in 0-100",
+              isinstance(value, int) and 0 <= value <= 100, f"got {value!r}")
+
+    # Skills: the enums, and the invariant that a "missing" list contains only misses.
+    for field, expected in (("detectedSkills", False), ("missingSkills", True)):
+        for row in data.get(field) or []:
+            name = row.get("name")
+            check(f"{field} {name!r} has a real SkillStatus",
+                  row.get("status") in constants["SkillStatus"], f"got {row.get('status')!r}")
+            check(f"{field} {name!r} has a real SkillImportance",
+                  row.get("importance") in constants["SkillImportance"],
+                  f"got {row.get('importance')!r}")
+            check(f"{field} {name!r} is {'MISSING' if expected else 'not MISSING'}",
+                  (row.get("status") == "MISSING") == expected)
+            check(f"{field} {name!r} explains itself", bool((row.get("note") or "").strip()))
+
+        order = constants["SkillImportance"]
+        keys = [(order.index(row["importance"]) if row.get("importance") in order else -1,
+                 row.get("name") or "") for row in data.get(field) or []]
+        check(f"{field} is ordered by importance then name, as the API returns it",
+              keys == sorted(keys), f"got {keys}")
+
+    # The breakdown has to add up to the number printed above it.
+    breakdown = data.get("scoreBreakdown") or []
+    scored = [row for row in breakdown if isinstance(row.get("outOf"), int) and row["outOf"] > 0]
+    check("the fixture's breakdown has scored lines", bool(scored))
+    if scored:
+        check("the fixture's earned points sum to its overall score",
+              sum(row["earned"] for row in scored) == data.get("overallScore"),
+              f"{sum(row['earned'] for row in scored)} vs {data.get('overallScore')}")
+        check("the fixture's breakdown is out of 100",
+              sum(row["outOf"] for row in scored) == 100,
+              f"sums to {sum(row['outOf'] for row in scored)}")
+        for row in scored:
+            check(f"breakdown {row.get('label')!r} earned no more than it was out of",
+                  row["earned"] <= row["outOf"])
+    check("the fixture's scored breakdown lines come before its context lines",
+          [row["outOf"] > 0 for row in breakdown] == sorted(
+              (row["outOf"] > 0 for row in breakdown), reverse=True))
+
+    # Keywords, and the anti-stuffing invariant the whole product rests on.
+    matching = data.get("matchingKeywords") or []
+    missing = data.get("missingKeywords") or []
+    check("the fixture's matching keywords are sorted", matching == sorted(matching))
+    check("the fixture's missing keywords are sorted", missing == sorted(missing))
+    check("no keyword is both present and absent", not (set(matching) & set(missing)),
+          f"in both lists: {sorted(set(matching) & set(missing))}")
+    for suggestion in data.get("suggestedKeywords") or []:
+        term = suggestion.get("term")
+        check(f"suggested keyword {term!r} is one the resume is missing", term in missing,
+              "suggesting a term the resume already uses is padding, not advice")
+        check(f"suggested keyword {term!r} says where it belongs",
+              bool((suggestion.get("placement") or "").strip()),
+              "a term with no placement is keyword stuffing")
+
+    # Sections, in the order somebody reads a resume.
+    sections = [row.get("section") for row in data.get("sectionScores") or []]
+    for section in sections:
+        check(f"section {section!r} is a ResumeSection value",
+              section in constants["ResumeSection"])
+    known = [name for name in constants["ResumeSection"] if name in sections]
+    check("the fixture's sections are in ResumeSection order", sections == known,
+          f"got {sections}")
+    # The engine scores every section of every resume, so a demo missing one is a demo
+    # showing a report shape the product never produces.
+    check("the fixture scores every section the engine reports",
+          set(sections) == set(constants["ResumeSection"]),
+          f"absent: {[name for name in constants['ResumeSection'] if name not in sections]}")
+    for row in data.get("sectionScores") or []:
+        value = row.get("score")
+        check(f"section {row.get('section')!r} scores 0-100",
+              isinstance(value, int) and 0 <= value <= 100, f"got {value!r}")
+
+    for field in FIXTURE_ADVICE:
+        for row in data.get(field) or []:
+            title = row.get("title")
+            check(f"{field} {title!r} has a real Priority",
+                  row.get("priority") in constants["Priority"], f"got {row.get('priority')!r}")
+            check(f"{field} {title!r} has a detail", bool((row.get("detail") or "").strip()))
+            url = row.get("resourceUrl")
+            check(f"{field} {title!r} links over https or not at all",
+                  url is None or str(url).startswith("https://"), f"got {url!r}")
+
+    provenance = data.get("provenance") or {}
+    check("the demo fixture does not claim a model wrote it",
+          provenance.get("modelWritten") is False,
+          "the demo is hand-written sample data and has to say so")
+    check("the demo fixture names its writer", bool((provenance.get("writtenBy") or "").strip()))
+
 
 
 # ---------------------------------------------------------------------------
@@ -1938,6 +2236,7 @@ def main() -> int:
     verify_jsx_nesting(root)
     verify_tokens(root)
     verify_contract(root)
+    verify_demo_fixture(root)
     verify_security(root)
 
     print(f"{CHECKS_RUN} checks run")

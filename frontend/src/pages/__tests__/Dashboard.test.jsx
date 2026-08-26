@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import Dashboard from '../Dashboard.jsx'
 import { fetchDashboard } from '../../features/dashboard/dashboardApi.js'
+import { formatDate } from '../../lib/format.js'
 
 /**
  * The dashboard's two jobs, tested.
@@ -86,8 +87,24 @@ describe('Dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Welcome back, Rohit' })).toBeInTheDocument()
     expect(screen.getByText('Aiming at Backend Developer')).toBeInTheDocument()
 
-    expect(screen.getByText('84')).toBeInTheDocument()
-    expect(screen.getByText('71')).toBeInTheDocument()
+    // Scoped to the metric cards on purpose: 84 is also a number inside the trend chart's
+    // table, and an unscoped query would pass today and go ambiguous the next time a chart
+    // publishes its data — which is a test failure that says nothing about the dashboard.
+    const scores = within(screen.getByRole('region', { name: 'Your scores' }))
+    expect(scores.getByText('84')).toBeInTheDocument()
+    expect(scores.getByText('71')).toBeInTheDocument()
+
+    // The trend is drawn as an SVG jsdom never lays out, so the table ChartFrame publishes
+    // is the only readable version of it here — and the only version a screen reader gets.
+    const trend = screen.getByRole('table', { name: 'Score history' })
+    const august = within(trend)
+      .getByRole('rowheader', { name: formatDate('2026-08-20T10:00:00Z') })
+      .closest('tr')
+    expect(within(august).getAllByRole('cell').map((cell) => cell.textContent)).toEqual([
+      '78',
+      '84',
+      '74',
+    ])
 
     expect(screen.getByText('Docker')).toBeInTheDocument()
     expect(screen.getByText('3×')).toBeInTheDocument()

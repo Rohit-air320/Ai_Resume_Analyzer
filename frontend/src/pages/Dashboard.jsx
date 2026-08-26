@@ -1,14 +1,14 @@
 import { Link } from 'react-router-dom'
 import { ArrowRight, Briefcase, FileText, Sparkles, TrendingUp } from 'lucide-react'
 import PageHeader from '../components/layout/PageHeader.jsx'
+import ScoreTrendChart from '../components/charts/ScoreTrendChart.jsx'
 import ScorePill from '../components/score/ScorePill.jsx'
 import EmptyState from '../components/state/EmptyState.jsx'
 import ErrorState from '../components/state/ErrorState.jsx'
 import { SkeletonDashboard } from '../components/state/Skeleton.jsx'
 import { useAuth } from '../features/auth/authContext.js'
 import { fetchDashboard } from '../features/dashboard/dashboardApi.js'
-import { bandForScore } from '../lib/scoreBands.js'
-import { count, formatDate, formatRelative } from '../lib/format.js'
+import { count, formatRelative } from '../lib/format.js'
 import { useResource } from '../lib/useResource.js'
 
 /**
@@ -19,11 +19,10 @@ import { useResource } from '../lib/useResource.js'
  * slowest member decides how fast the page feels, and a client that has to know which
  * five. The endpoint is screen-shaped on purpose, and it is documented as such.
  *
- * **The trend strip is CSS, not a chart library.** Thirty bars showing whether the line is
- * going up does not need an axis, a tooltip or a rendering engine; Recharts arrives in
- * Phase 9 for the views where the shape of the data actually carries the meaning. Reaching
- * for the chart library first is how a dashboard ends up with a 200KB dependency to draw
- * something the browser can already draw.
+ * **The trend is a real chart here, and only here.** Whether the line is going up is the
+ * one question on this page whose answer is a shape rather than a number, which is the test
+ * a chart has to pass to earn its place. It renders through `ChartFrame`, so the same three
+ * columns exist as a table for anyone not looking at pictures.
  *
  * **Absent is not zero.** `scores` omits its fields entirely until there is an analysis to
  * average, so the cards render a dash rather than a confident 0 — a fabricated score is
@@ -39,38 +38,6 @@ function Metric({ label, value, hint }) {
         {value ?? '—'}
       </p>
       {hint ? <p className="mt-2.5 text-xs text-ink-subtle">{hint}</p> : null}
-    </div>
-  )
-}
-
-/**
- * Score history as a row of columns.
- *
- * Hidden from assistive technology and paired with the numbers above it, which carry the
- * same information in text. A bar chart announced bar by bar is noise; "latest 78, best 84,
- * average 71" is the sentence a screen-reader user actually wants.
- */
-function TrendStrip({ points }) {
-  return (
-    <div aria-hidden="true" className="flex h-32 items-end gap-1.5">
-      {points.map((point) => {
-        const band = bandForScore(point.overall)
-        const height = Math.max(6, point.overall ?? 0)
-
-        return (
-          <span
-            key={point.recordedAt}
-            title={`${point.overall} on ${formatDate(point.recordedAt)}`}
-            className="group relative flex-1 rounded-t-[3px] bg-surface-sunken"
-            style={{ height: '100%' }}
-          >
-            <span
-              className={`absolute bottom-0 left-0 w-full rounded-t-[3px] ${band.bg} opacity-90 transition-opacity duration-150 group-hover:opacity-100`}
-              style={{ height: `${height}%` }}
-            />
-          </span>
-        )
-      })}
     </div>
   )
 }
@@ -151,13 +118,7 @@ export default function Dashboard() {
 
               <div className="mt-7">
                 {scoreHistory.length > 0 ? (
-                  <>
-                    <TrendStrip points={scoreHistory} />
-                    <div className="mt-3 flex justify-between text-xs text-ink-subtle">
-                      <span>{formatDate(scoreHistory[0]?.recordedAt)}</span>
-                      <span>{formatDate(scoreHistory[scoreHistory.length - 1]?.recordedAt)}</span>
-                    </div>
-                  </>
+                  <ScoreTrendChart points={scoreHistory} captionHidden />
                 ) : (
                   <p className="text-sm text-ink-muted">
                     Nothing to plot yet. A run that did not finish is counted but has no scores, so
@@ -203,6 +164,16 @@ export default function Dashboard() {
                   </li>
                 )}
               </ul>
+
+              {topSkillGaps.length > 0 ? (
+                <Link
+                  to="/skill-gap"
+                  className="btn btn-ghost mt-5 -ml-2 text-sm text-brand-700"
+                >
+                  Break these down
+                  <ArrowRight size={15} aria-hidden="true" />
+                </Link>
+              ) : null}
             </section>
           </div>
 

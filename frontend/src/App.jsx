@@ -1,14 +1,19 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 import AppLayout from './components/layout/AppLayout.jsx'
 import RequireAuth from './features/auth/RequireAuth.jsx'
 import AnalysisDetail from './pages/AnalysisDetail.jsx'
 import Dashboard from './pages/Dashboard.jsx'
+import Demo from './pages/Demo.jsx'
 import History from './pages/History.jsx'
+import Landing from './pages/Landing.jsx'
 import Login from './pages/Login.jsx'
 import NewAnalysis from './pages/NewAnalysis.jsx'
+import NotFound from './pages/NotFound.jsx'
 import Profile from './pages/Profile.jsx'
+import Recommendations from './pages/Recommendations.jsx'
 import Resumes from './pages/Resumes.jsx'
 import SignUp from './pages/SignUp.jsx'
+import SkillGap from './pages/SkillGap.jsx'
 import SystemCheck from './pages/SystemCheck.jsx'
 
 /**
@@ -25,16 +30,27 @@ import SystemCheck from './pages/SystemCheck.jsx'
  * result. The static segment ranks above the dynamic one in React Router's matcher, so
  * "new" is a page rather than an id — the order below is for the reader, not the router.
  *
- * The four sidebar destinations that are not built yet deliberately have no routes. The
- * sidebar renders them disabled from the same list, so the app has no dead links rather
- * than a set of empty pages pretending to be features.
+ * `/skill-gap` and `/recommendations` read across analyses rather than into one, which is
+ * why they are top-level rather than nested under `/analyses/:id`: neither is a view of a
+ * single result, and both are reachable with no analysis selected.
  *
- * "/" is the setup check until Phase 10 puts the landing page there.
+ * Settings is the one sidebar destination without a route. The sidebar renders it disabled
+ * from the same list, so the app has no dead link rather than an empty page pretending to
+ * be a feature.
+ *
+ * The four public routes stay public for a signed-in visitor too. `/` and `/demo` explain and
+ * demonstrate the product, and redirecting somebody away from them because they have a session
+ * makes the explanation unreadable to the only people who can check it, and breaks a shared
+ * link. `SiteHeader` swaps its call to action instead.
+ *
+ * `*` renders `NotFound` rather than redirecting to `/`. A silent redirect rewrites the address
+ * bar and leaves the reader unsure whether they mistyped or the link is dead.
  */
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<SystemCheck />} />
+      <Route path="/" element={<Landing />} />
+      <Route path="/demo" element={<Demo />} />
       <Route path="/system-check" element={<SystemCheck />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<SignUp />} />
@@ -46,11 +62,13 @@ export default function App() {
           <Route path="/analyses" element={<History />} />
           <Route path="/analyses/new" element={<NewAnalysis />} />
           <Route path="/analyses/:id" element={<AnalysisDetail />} />
+          <Route path="/skill-gap" element={<SkillGap />} />
+          <Route path="/recommendations" element={<Recommendations />} />
           <Route path="/profile" element={<Profile />} />
         </Route>
       </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   )
 }

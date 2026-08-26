@@ -1,14 +1,20 @@
 import { Link } from 'react-router-dom'
+import MatchRail from '../../components/analysis/MatchRail.jsx'
+import { DEMO_ANALYSIS } from '../demo/demoAnalysis.js'
 
 /**
  * Shared frame for the sign-in and sign-up screens.
  *
- * The left column is not decoration. It is a static instance of the product's
- * signature element — the match rail, which lays a posting's requirements against
- * the evidence a resume actually provides. Putting it here means the first thing a
- * visitor sees is what the tool does, in the tool's own vocabulary, rather than a
- * stock illustration or a gradient. It carries no live data and makes no request, so
- * it costs nothing on a screen where the only job is to get a password typed.
+ * The left column is not decoration. It is the product's signature element — the match rail,
+ * which lays a posting's requirements against the evidence a resume actually provides. Putting
+ * it here means the first thing a visitor sees is what the tool does, in the tool's own
+ * vocabulary, rather than a stock illustration or a gradient. It makes no request, so it costs
+ * nothing on a screen whose only job is to get a password typed.
+ *
+ * It is the **real** `MatchRail` reading the **same fixture** as the landing page and the demo.
+ * Until Phase 10 this file carried its own hand-written copy of the rail, with its own tone map
+ * and its own six rows — a preview that could quietly stop resembling the thing it previewed.
+ * One component and one fixture means the shop window cannot go stale.
  *
  * It is hidden below `lg`. On a phone the form is the whole point, and a preview
  * pushed above it would put the sign-in fields below the fold.
@@ -45,50 +51,29 @@ export default function AuthLayout({ eyebrow, title, subtitle, children, footer 
 }
 
 /**
- * Verdicts come from the score-band tokens, so this preview cannot drift from the
- * colours the real results screen uses. The example is the spec's demo profile: a
- * Java and Spring Boot developer against a posting that also wants containers.
+ * The rail, the numbers and the disclaimer all come out of `DEMO_ANALYSIS`, so this panel
+ * cannot claim a score the demo does not show.
  */
-const RAIL_ROWS = [
-  { requirement: 'Java 17', verdict: 'Strong', evidence: '3 projects', tone: 'excellent' },
-  { requirement: 'Spring Boot', verdict: 'Strong', evidence: 'REST APIs', tone: 'excellent' },
-  { requirement: 'React', verdict: 'Strong', evidence: 'Hooks, Router', tone: 'excellent' },
-  { requirement: 'MySQL', verdict: 'Partial', evidence: 'Named once', tone: 'moderate' },
-  { requirement: 'Docker', verdict: 'Missing', evidence: 'No evidence', tone: 'critical' },
-  { requirement: 'AWS', verdict: 'Missing', evidence: 'No evidence', tone: 'critical' },
-]
-
-const TONES = {
-  excellent: { text: 'text-band-excellent', rail: 'bg-band-excellent/50' },
-  moderate: { text: 'text-band-moderate', rail: 'bg-band-moderate/50' },
-  critical: { text: 'text-band-critical', rail: 'bg-band-critical/40' },
-}
-
 function MatchRailPreview() {
   return (
     <aside className="hidden bg-surface-sunken px-12 py-16 lg:flex lg:flex-col lg:justify-center">
       <div className="mx-auto w-full max-w-lg">
-        <p className="eyebrow">Match rail · Senior Java Developer</p>
+        <p className="eyebrow">Match rail · {DEMO_ANALYSIS.target.jobTitle}</p>
         <p className="mt-4 max-w-md font-display text-2xl font-semibold leading-tight">
           Every requirement in the posting, next to what your resume actually proves.
         </p>
 
-        <ul className="mt-10 space-y-3.5">
-          {RAIL_ROWS.map((row) => (
-            <li key={row.requirement} className="grid grid-cols-[8rem_1fr_5.5rem] items-center gap-4">
-              <span className="truncate font-mono text-xs text-ink">{row.requirement}</span>
-              <span className={`h-px w-full ${TONES[row.tone].rail}`} aria-hidden="true" />
-              <span className={`text-right font-mono text-xs ${TONES[row.tone].text}`}>
-                {row.verdict}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-10">
+          <MatchRail
+            detected={DEMO_ANALYSIS.detectedSkills}
+            missing={DEMO_ANALYSIS.missingSkills}
+          />
+        </div>
 
         <dl className="mt-12 flex gap-10 border-t border-line pt-6">
-          <Metric label="ATS score" value="84" />
-          <Metric label="Job match" value="81" />
-          <Metric label="Gaps found" value="2" />
+          <Metric label="ATS score" value={DEMO_ANALYSIS.atsScore} />
+          <Metric label="Job match" value={DEMO_ANALYSIS.jobMatchScore} />
+          <Metric label="Gaps found" value={DEMO_ANALYSIS.missingSkills.length} />
         </dl>
 
         <p className="mt-8 max-w-md text-xs text-ink-subtle">

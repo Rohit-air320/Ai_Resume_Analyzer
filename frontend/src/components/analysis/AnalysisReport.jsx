@@ -1,0 +1,383 @@
+import { Link } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, CircleDashed } from 'lucide-react'
+import MatchRail from './MatchRail.jsx'
+import ScoreBreakdownDonut from '../charts/ScoreBreakdownDonut.jsx'
+import SectionRadar from '../charts/SectionRadar.jsx'
+import SkillCoverageChart from '../charts/SkillCoverageChart.jsx'
+import ScoreMeter from '../score/ScoreMeter.jsx'
+import ScorePill from '../score/ScorePill.jsx'
+import { humanise } from '../../lib/format.js'
+
+/**
+ * The body of an analysis, given the document and nothing else.
+ *
+ * **Why this is a component and not a page.** Two screens show a full result: the signed-in
+ * `/analyses/:id` and the public `/demo`. If the demo had its own markup it would rot — the
+ * next phase to touch the results page would leave the shop window showing a product that no
+ * longer exists. Here the demo passes a fixture where the page passes a fetch, and there is
+ * one report either way. The split also draws the line where it belongs: this file takes a
+ * document and returns markup, with no router params, no request and no loading states.
+ *
+ * **The order of this report is an argument.** The verdict and the sentence explaining it come
+ * first, then the requirement-by-requirement rail, then the arithmetic behind the number, then
+ * the gaps, then what to do about them. A results screen that opens with six dials tells the
+ * reader to work out for themselves what matters; this one answers "how did I do", "against
+ * what", "why", and "what now", in that order, because that is the order the questions arrive
+ * in.
+ *
+ * **Every chart here is an addition to text that already reads.** The rail, the donut, the
+ * coverage bars and the radar all sit beside prose and numbers that say the same thing, and
+ * each ships its own table through `ChartFrame`. A chart that is the only way to read a score
+ * is a chart that has locked somebody out.
+ */
+
+const IMPORTANCE_STYLES = {
+  CRITICAL: 'text-danger-600',
+  IMPORTANT: 'text-warning-600',
+  NICE_TO_HAVE: 'text-ink-subtle',
+}
+
+const PRIORITY_STYLES = {
+  HIGH: 'text-danger-600',
+  MEDIUM: 'text-warning-600',
+  LOW: 'text-ink-subtle',
+}
+
+const STATUS_ICONS = {
+  STRONG: CheckCircle2,
+  PARTIAL: CircleDashed,
+}
+
+function Section({ title, lead, children }) {
+  const id = title.toLowerCase().replace(/[^a-z]+/g, '-')
+
+  return (
+    <section aria-labelledby={id} className="panel p-5 sm:p-7">
+      <h2 id={id} className="text-base font-semibold">
+        {title}
+      </h2>
+      {lead ? <p className="mt-1.5 max-w-2xl text-sm text-ink-muted">{lead}</p> : null}
+      <div className="mt-6">{children}</div>
+    </section>
+  )
+}
+
+function AdviceList({ items, empty }) {
+  if (!items || items.length === 0) {
+    return <p className="text-sm text-ink-muted">{empty}</p>
+  }
+
+  return (
+    <ol className="space-y-3">
+      {items.map((advice) => (
+        <li key={advice.title} className="card p-4 sm:p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-sm font-semibold text-ink">{advice.title}</h3>
+            <span className={`chip ${PRIORITY_STYLES[advice.priority] ?? 'text-ink-subtle'}`}>
+              {humanise(advice.priority)} priority
+            </span>
+          </div>
+
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">{advice.detail}</p>
+
+          {advice.resourceUrl ? (
+            <a
+              href={advice.resourceUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mt-3 inline-block text-sm font-medium text-brand-700 hover:underline"
+            >
+              Where to learn it
+            </a>
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+export default function AnalysisReport({ result }) {
+  if (result.status === 'FAILED') {
+    return (
+      <div role="alert" className="panel p-6 sm:p-8">
+        <AlertTriangle size={20} className="text-warning-500" aria-hidden="true" />
+        <h2 className="mt-4 text-base font-semibold">This analysis did not finish</h2>
+        <p className="mt-2 max-w-prose text-sm text-ink-muted">
+          {result.failureReason ||
+            'Something went wrong while scoring this resume. Nothing about your resume caused it.'}
+        </p>
+        <Link to="/analyses/new" className="btn btn-primary mt-5">
+          Try again
+        </Link>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* The verdict, and the sentence that justifies it. */}
+      <section aria-labelledby="verdict" className="panel p-5 sm:p-7">
+        <div className="flex flex-wrap items-center gap-4">
+          <ScorePill score={result.overallScore} size="lg" />
+          <h2 id="verdict" className="text-sm font-medium text-ink-muted">
+            Overall match for this role
+          </h2>
+        </div>
+
+        {result.overallFeedback ? (
+          <p className="mt-5 max-w-3xl text-[0.95rem] leading-relaxed text-ink">
+            {result.overallFeedback}
+          </p>
+        ) : null}
+
+        <div className="mt-7 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <ScoreMeter label="ATS compatibility" score={result.atsScore} />
+          <ScoreMeter label="Job match" score={result.jobMatchScore} />
+          <ScoreMeter label="Skills match" score={result.skillsMatchScore} />
+          <ScoreMeter label="Keywords" score={result.keywordScore} />
+          {/* "Experience relevance", not "Experience": the section-by-section block further
+              down has a meter for the experience *section*, and two meters on one page with
+              the same accessible name leave anybody navigating by name unable to tell which
+              is which. This is the wording the score breakdown already uses. */}
+          <ScoreMeter label="Experience relevance" score={result.experienceScore} />
+        </div>
+
+        {result.provenance ? (
+          <p className="mt-7 border-t border-line pt-4 text-xs text-ink-subtle">
+            Written by {result.provenance.writtenBy}
+            {result.provenance.modelWritten ? '' : ' (offline writer — the scores are unaffected)'}
+            {result.provenance.processingMs ? (
+              <>
+                {' · '}
+                <span data-numeric="">{result.provenance.processingMs}</span>ms
+              </>
+            ) : null}
+          </p>
+        ) : null}
+      </section>
+
+      {result.detectedSkills?.length > 0 || result.missingSkills?.length > 0 ? (
+        <Section
+          title="Requirement by requirement"
+          lead="Everything this posting asked for, against what your resume proves. A broken line means the posting named it and your resume never does."
+        >
+          <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] xl:gap-10">
+            <MatchRail detected={result.detectedSkills} missing={result.missingSkills} />
+            <SkillCoverageChart detected={result.detectedSkills} missing={result.missingSkills} />
+          </div>
+        </Section>
+      ) : null}
+
+      {result.scoreBreakdown?.length > 0 ? (
+        <Section
+          title="How the score was reached"
+          lead="Each line is part of the arithmetic. Nothing here is a black box — the numbers come from the comparison, not from the model."
+        >
+          <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] xl:gap-10">
+            <ul className="divide-y divide-line">
+              {result.scoreBreakdown.map((reason) => (
+                <li
+                  key={reason.label}
+                  className="flex flex-wrap gap-x-6 gap-y-1 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink">{reason.label}</p>
+                    {reason.comment ? (
+                      <p className="mt-1 text-xs text-ink-muted">{reason.comment}</p>
+                    ) : null}
+                  </div>
+
+                  {/* outOf is 0 for a note that carries context rather than points. */}
+                  {reason.outOf > 0 ? (
+                    <p data-numeric="" className="text-sm text-ink-muted">
+                      <span className="font-semibold text-ink">{reason.earned}</span> /{' '}
+                      {reason.outOf}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+
+            {/* The same arithmetic as a ring: which component cost the most, at a glance. */}
+            <ScoreBreakdownDonut breakdown={result.scoreBreakdown} />
+          </div>
+        </Section>
+      ) : null}
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Section
+          title="Skills you demonstrate"
+          lead="Read out of your resume, with the evidence that backs each one."
+        >
+          {result.detectedSkills?.length > 0 ? (
+            <ul className="space-y-3">
+              {result.detectedSkills.map((skill) => {
+                const Icon = STATUS_ICONS[skill.status] ?? CircleDashed
+
+                return (
+                  <li key={`${skill.name}-${skill.status}`} className="flex gap-3">
+                    <Icon
+                      size={16}
+                      className={`mt-0.5 shrink-0 ${skill.status === 'STRONG' ? 'text-success-600' : 'text-warning-600'}`}
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-ink">
+                        {skill.name}
+                        <span className="ml-2 text-xs font-normal text-ink-subtle">
+                          {humanise(skill.status)}
+                        </span>
+                      </p>
+                      {skill.note ? <p className="mt-1 text-xs text-ink-muted">{skill.note}</p> : null}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              We could not match any of the posting&apos;s skills to your resume.
+            </p>
+          )}
+        </Section>
+
+        <Section
+          title="Skill gaps"
+          lead="What the posting asks for that your resume does not show. Ordered by how much it matters."
+        >
+          {result.missingSkills?.length > 0 ? (
+            <ul className="space-y-3">
+              {result.missingSkills.map((skill) => (
+                <li key={skill.name} className="flex gap-3">
+                  <span
+                    aria-hidden="true"
+                    className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-danger-500"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-ink">
+                      {skill.name}
+                      <span
+                        className={`ml-2 text-xs font-normal ${IMPORTANCE_STYLES[skill.importance] ?? 'text-ink-subtle'}`}
+                      >
+                        {humanise(skill.importance)}
+                      </span>
+                    </p>
+                    {skill.note ? <p className="mt-1 text-xs text-ink-muted">{skill.note}</p> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              Nothing missing — your resume covers every skill this posting names.
+            </p>
+          )}
+        </Section>
+      </div>
+
+      <Section
+        title="Keywords"
+        lead="Terms an applicant tracking system is likely to look for. Every suggestion comes with the place it honestly belongs — a list of words to sprinkle in would be keyword stuffing, and that is not what this is."
+      >
+        <div className="grid gap-7 lg:grid-cols-2">
+          <div>
+            <h3 className="eyebrow">Already in your resume</h3>
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {result.matchingKeywords?.length > 0 ? (
+                result.matchingKeywords.map((keyword) => (
+                  <li key={keyword} className="chip text-success-600">
+                    {keyword}
+                  </li>
+                ))
+              ) : (
+                <li className="text-sm text-ink-muted">
+                  None of the posting&apos;s key terms appear.
+                </li>
+              )}
+            </ul>
+
+            {result.missingKeywords?.length > 0 ? (
+              <>
+                <h3 className="eyebrow mt-6">Absent</h3>
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {result.missingKeywords.map((keyword) => (
+                    <li key={keyword} className="chip text-ink-muted">
+                      {keyword}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
+
+          <div>
+            <h3 className="eyebrow">Worth adding, and where</h3>
+            {result.suggestedKeywords?.length > 0 ? (
+              <ul className="mt-3 space-y-3">
+                {result.suggestedKeywords.map((suggestion) => (
+                  <li key={suggestion.term}>
+                    <p className="text-sm font-medium text-ink">{suggestion.term}</p>
+                    <p className="mt-1 text-xs text-ink-muted">{suggestion.placement}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm text-ink-muted">
+                Nothing to add. Any remaining absent term had no honest place in your resume, so it
+                was left out rather than suggested.
+              </p>
+            )}
+          </div>
+        </div>
+      </Section>
+
+      {result.sectionScores?.length > 0 ? (
+        <Section
+          title="Section by section"
+          lead="In the order somebody reads your resume, not in score order. The outline is the same eight numbers — it is there to show which one is dented, not to replace the notes."
+        >
+          <div className="grid gap-8 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:gap-10">
+            <SectionRadar sections={result.sectionScores} />
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              {result.sectionScores.map((section) => (
+                <ScoreMeter
+                  key={section.section}
+                  label={humanise(section.section)}
+                  score={section.score}
+                  note={section.note}
+                />
+              ))}
+            </div>
+          </div>
+        </Section>
+      ) : null}
+
+      <Section
+        title="What to change"
+        lead="Specific edits to the resume you uploaded. Nothing here asks you to claim anything you have not done."
+      >
+        <AdviceList
+          items={result.improvements}
+          empty="No changes suggested — this resume already reads well against the posting."
+        />
+      </Section>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Section title="Projects worth building" lead="Ways to turn a gap into evidence.">
+          <AdviceList
+            items={result.recommendedProjects}
+            empty="No project suggestions for this run."
+          />
+        </Section>
+
+        <Section title="What to learn next" lead="Ordered by what this role actually asks for.">
+          <AdviceList
+            items={result.learningRecommendations}
+            empty="No learning suggestions for this run."
+          />
+        </Section>
+      </div>
+    </div>
+  )
+}
