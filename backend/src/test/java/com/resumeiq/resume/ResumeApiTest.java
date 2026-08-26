@@ -2,6 +2,7 @@ package com.resumeiq.resume;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.resumeiq.support.DatabaseCleaner;
 import com.resumeiq.support.DocumentFixtures;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,11 +86,10 @@ class ResumeApiTest {
 
     @BeforeEach
     void clearState() {
-        // These tests commit, so each one starts by emptying the tables it writes to. Resumes
-        // first: the foreign key points that way.
-        jdbc.update("delete from resumes");
-        jdbc.update("delete from refresh_tokens");
-        jdbc.update("delete from users");
+        // These tests commit, so each one starts by emptying the tables it writes to — and the ones
+        // its neighbours in the same cached context write to, which is why the order lives in one
+        // place rather than in each class.
+        DatabaseCleaner.clear(jdbc);
     }
 
     @AfterAll

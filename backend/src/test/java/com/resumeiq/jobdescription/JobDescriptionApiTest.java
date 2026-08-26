@@ -2,6 +2,7 @@ package com.resumeiq.jobdescription;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.resumeiq.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -120,12 +121,10 @@ class JobDescriptionApiTest {
 
     @BeforeEach
     void clearState() {
-        // Postings first, then tokens, then users: the foreign keys point that way. The skills
-        // table is deliberately left alone — the seeder is an ApplicationRunner and runs once per
-        // context, so emptying the catalogue here would empty it for every test after this one.
-        jdbc.update("delete from job_descriptions");
-        jdbc.update("delete from refresh_tokens");
-        jdbc.update("delete from users");
+        // Emptied in foreign-key order by a shared helper: the list of tables a class has to clear is
+        // not the list of tables it writes to, because Spring caches one context across several
+        // classes and their rows outlive them.
+        DatabaseCleaner.clear(jdbc);
     }
 
     @Test

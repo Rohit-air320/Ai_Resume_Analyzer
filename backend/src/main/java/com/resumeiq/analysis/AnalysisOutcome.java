@@ -36,6 +36,19 @@ public record AnalysisOutcome(AnalysisFacts facts, AiAdvice advice) {
      * provider does not silently make every analysis it writes look computed.
      */
     public boolean isModelWritten() {
-        return !advice.source().startsWith(OfflineAdviceSource.DESCRIPTION);
+        return isModelWritten(advice.source());
+    }
+
+    /**
+     * The same question, asked of a stored analysis.
+     *
+     * <p>Split out as a static so the rule lives in one place. Phase 7 stores the source string on the
+     * analysis row and has to answer this again when the row is read back weeks later, and two copies
+     * of a heuristic are two things to keep in step.
+     *
+     * @param source the stored source string, which may be null on a row that never completed
+     */
+    public static boolean isModelWritten(String source) {
+        return source != null && !source.startsWith(OfflineAdviceSource.DESCRIPTION);
     }
 }

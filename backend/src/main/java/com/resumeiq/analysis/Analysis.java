@@ -211,6 +211,30 @@ public class Analysis extends PublicIdEntity {
     private List<SectionAssessment> sectionAssessments = new ArrayList<>();
 
     /**
+     * Why each score is the number it is.
+     *
+     * <p>Stored rather than recomputed, and that is the whole point of the column. The scores are
+     * produced by the engine at analysis time from a skill catalogue and a set of weights that will
+     * both change as the product grows, so recomputing the reasons when somebody opens a
+     * three-month-old analysis would explain it with today's rules and quietly disagree with the
+     * number stored beside them. Storing the reasons makes an old analysis as answerable as a fresh
+     * one, which is the difference between a score and a verdict.
+     */
+    @ElementCollection
+    @CollectionTable(
+            name = "analysis_score_notes",
+            joinColumns = @JoinColumn(
+                    name = "analysis_id",
+                    foreignKey = @ForeignKey(name = "fk_analysis_score_notes_analysis")
+            ),
+            indexes = @Index(name = "ix_analysis_score_notes_analysis", columnList = "analysis_id")
+    )
+    @Setter(AccessLevel.NONE)
+    @Getter(AccessLevel.NONE)
+    @Builder.Default
+    private List<ScoreExplanation> scoreNotes = new ArrayList<>();
+
+    /**
      * Adds a skill verdict and sets the back-reference in the same call.
      *
      * <p>Setting only one side is the most common bidirectional-mapping bug in JPA: the child
@@ -235,6 +259,10 @@ public class Analysis extends PublicIdEntity {
         sectionAssessments.add(assessment);
     }
 
+    public void addScoreNote(ScoreExplanation note) {
+        scoreNotes.add(note);
+    }
+
     public Set<AnalysisSkill> getSkills() {
         return Collections.unmodifiableSet(skills);
     }
@@ -249,6 +277,10 @@ public class Analysis extends PublicIdEntity {
 
     public List<SectionAssessment> getSectionAssessments() {
         return Collections.unmodifiableList(sectionAssessments);
+    }
+
+    public List<ScoreExplanation> getScoreNotes() {
+        return Collections.unmodifiableList(scoreNotes);
     }
 
     /** Records a successful run. Keeps the two facts that define "done" in one place. */

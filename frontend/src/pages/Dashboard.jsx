@@ -1,93 +1,291 @@
 import { Link } from 'react-router-dom'
-import { FileText, LogOut, Sparkles } from 'lucide-react'
+import { ArrowRight, Briefcase, FileText, Sparkles, TrendingUp } from 'lucide-react'
+import PageHeader from '../components/layout/PageHeader.jsx'
+import ScorePill from '../components/score/ScorePill.jsx'
+import EmptyState from '../components/state/EmptyState.jsx'
+import ErrorState from '../components/state/ErrorState.jsx'
+import { SkeletonDashboard } from '../components/state/Skeleton.jsx'
 import { useAuth } from '../features/auth/authContext.js'
+import { fetchDashboard } from '../features/dashboard/dashboardApi.js'
+import { bandForScore } from '../lib/scoreBands.js'
+import { count, formatDate, formatRelative } from '../lib/format.js'
+import { useResource } from '../lib/useResource.js'
 
 /**
- * Placeholder dashboard — the landing target for a signed-in session.
+ * The signed-in home screen.
  *
- * Phase 7 replaces this with the real thing: score history, recent analyses, skill
- * gaps and the sidebar. What it proves today is the whole point of Phase 3, and it
- * proves it by rendering: the name below came from `/api/auth/me` via a token this
- * page never sees, and it survives a browser refresh because the httpOnly cookie
- * renews the session before this component mounts.
+ * **One request.** `/api/dashboard` returns this page's shape — counts, three scores, the
+ * trend, recent runs and the top gaps — because the alternative is five requests whose
+ * slowest member decides how fast the page feels, and a client that has to know which
+ * five. The endpoint is screen-shaped on purpose, and it is documented as such.
+ *
+ * **The trend strip is CSS, not a chart library.** Thirty bars showing whether the line is
+ * going up does not need an axis, a tooltip or a rendering engine; Recharts arrives in
+ * Phase 9 for the views where the shape of the data actually carries the meaning. Reaching
+ * for the chart library first is how a dashboard ends up with a 200KB dependency to draw
+ * something the browser can already draw.
+ *
+ * **Absent is not zero.** `scores` omits its fields entirely until there is an analysis to
+ * average, so the cards render a dash rather than a confident 0 — a fabricated score is
+ * worse than an empty one, and this whole product is an argument for numbers that mean
+ * something.
  */
-export default function Dashboard() {
-  const { user, signOut } = useAuth()
 
+function Metric({ label, value, hint }) {
   return (
-    <main className="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Signed in</p>
-          <h1 className="mt-3 text-display-md">
-            Welcome, {user?.fullName?.split(' ')[0] || 'there'}.
-          </h1>
-          <p className="mt-3 max-w-lg text-ink-muted">
-            Your session is live. Uploading, job descriptions and analysis arrive in the next
-            phases; this page becomes the real dashboard in Phase 7.
-          </p>
-        </div>
-
-        <button type="button" onClick={signOut} className="btn btn-secondary">
-          <LogOut size={16} aria-hidden="true" />
-          Sign out
-        </button>
-      </header>
-
-      <section className="panel mt-10 p-6" aria-labelledby="account-heading">
-        <h2 id="account-heading" className="text-base font-semibold">
-          Account
-        </h2>
-        <dl className="mt-5 grid gap-x-8 gap-y-3 sm:grid-cols-2">
-          <Detail label="Name" value={user?.fullName} />
-          <Detail label="Email" value={user?.email} />
-          <Detail label="Target role" value={user?.targetRole || 'Not set yet'} />
-          <Detail label="Experience" value={user?.experienceLevel || 'Not set yet'} />
-        </dl>
-      </section>
-
-      <section className="mt-6 grid gap-4 sm:grid-cols-2">
-        <NextStep
-          icon={FileText}
-          phase="Phase 4"
-          title="Upload a resume"
-          detail="PDF or DOCX, read on the server and never exposed as a public file."
-        />
-        <NextStep
-          icon={Sparkles}
-          phase="Phase 6"
-          title="Analyse against a posting"
-          detail="ATS score, match score, skill gaps and suggestions tied to real evidence."
-        />
-      </section>
-
-      <p className="mt-8 text-xs text-ink-subtle">
-        Setup check still available at{' '}
-        <Link to="/system-check" className="underline underline-offset-2 hover:text-ink-muted">
-          /system-check
-        </Link>
-        .
+    <div className="card p-5">
+      <p className="eyebrow">{label}</p>
+      <p data-numeric="" className="mt-3 text-metric leading-none text-ink">
+        {value ?? '—'}
       </p>
-    </main>
-  )
-}
-
-function Detail({ label, value }) {
-  return (
-    <div>
-      <dt className="eyebrow">{label}</dt>
-      <dd className="mt-1 text-sm text-ink">{value || '—'}</dd>
+      {hint ? <p className="mt-2.5 text-xs text-ink-subtle">{hint}</p> : null}
     </div>
   )
 }
 
-function NextStep({ icon: Icon, phase, title, detail }) {
+/**
+ * Score history as a row of columns.
+ *
+ * Hidden from assistive technology and paired with the numbers above it, which carry the
+ * same information in text. A bar chart announced bar by bar is noise; "latest 78, best 84,
+ * average 71" is the sentence a screen-reader user actually wants.
+ */
+function TrendStrip({ points }) {
   return (
-    <article className="card p-5">
-      <Icon size={18} className="text-brand-600" aria-hidden="true" />
-      <p className="eyebrow mt-4">{phase}</p>
-      <h3 className="mt-2 text-sm font-semibold">{title}</h3>
-      <p className="mt-2 text-sm text-ink-muted">{detail}</p>
-    </article>
+    <div aria-hidden="true" className="flex h-32 items-end gap-1.5">
+      {points.map((point) => {
+        const band = bandForScore(point.overall)
+        const height = Math.max(6, point.overall ?? 0)
+
+        return (
+          <span
+            key={point.recordedAt}
+            title={`${point.overall} on ${formatDate(point.recordedAt)}`}
+            className="group relative flex-1 rounded-t-[3px] bg-surface-sunken"
+            style={{ height: '100%' }}
+          >
+            <span
+              className={`absolute bottom-0 left-0 w-full rounded-t-[3px] ${band.bg} opacity-90 transition-opacity duration-150 group-hover:opacity-100`}
+              style={{ height: `${height}%` }}
+            />
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+export default function Dashboard() {
+  const { user } = useAuth()
+  const dashboard = useResource(() => fetchDashboard(), [])
+
+  if (dashboard.isLoading) return <SkeletonDashboard />
+  if (dashboard.hasFailed) {
+    return (
+      <ErrorState
+        title="We could not load your dashboard"
+        error={dashboard.error}
+        onRetry={dashboard.reload}
+      />
+    )
+  }
+
+  const { counts, scores, scoreHistory = [], recentAnalyses = [], topSkillGaps = [], targetRole } =
+    dashboard.data
+  const firstName = user?.fullName?.split(' ')[0]
+  const busiestGap = topSkillGaps[0]?.occurrences ?? 1
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={targetRole ? `Aiming at ${targetRole}` : 'Dashboard'}
+        title={firstName ? `Welcome back, ${firstName}` : 'Welcome back'}
+        lead={
+          counts.analyses > 0
+            ? 'Every score here was calculated when the analysis ran, so the trend is a real history rather than a re-scoring of today.'
+            : 'Upload a resume, paste the job you are applying to, and see how the two compare.'
+        }
+      >
+        <Link to="/analyses/new" className="btn btn-primary">
+          <Sparkles size={15} aria-hidden="true" />
+          New analysis
+        </Link>
+      </PageHeader>
+
+      {counts.analyses === 0 ? (
+        <EmptyState
+          icon={Sparkles}
+          title="No analyses yet"
+          detail="One resume and one job description is all it takes. You will get an ATS score, a match score, the skills you are missing, and specific edits to make."
+          actionTo="/analyses/new"
+          actionLabel="Run your first analysis"
+        />
+      ) : (
+        <div className="space-y-6">
+          <section aria-label="Your scores" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Latest score" value={scores.latest} hint="Your most recent analysis" />
+            <Metric label="Best score" value={scores.best} hint="Across every run" />
+            <Metric label="Average" value={scores.average} hint="All analyses, unweighted" />
+            <Metric
+              label="Analyses"
+              value={counts.analyses}
+              hint={`${count(counts.resumes, 'resume')} · ${count(counts.jobDescriptions, 'posting')}`}
+            />
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+            <section aria-labelledby="trend-heading" className="panel p-5 sm:p-7">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 id="trend-heading" className="text-base font-semibold">
+                    Score history
+                  </h2>
+                  <p className="mt-1.5 text-sm text-ink-muted">
+                    {scoreHistory.length === 0
+                      ? 'Your completed analyses appear here.'
+                      : `Your last ${scoreHistory.length === 1 ? 'analysis' : `${scoreHistory.length} analyses`}, oldest on the left.`}
+                  </p>
+                </div>
+                <TrendingUp size={18} className="shrink-0 text-ink-subtle" aria-hidden="true" />
+              </div>
+
+              <div className="mt-7">
+                {scoreHistory.length > 0 ? (
+                  <>
+                    <TrendStrip points={scoreHistory} />
+                    <div className="mt-3 flex justify-between text-xs text-ink-subtle">
+                      <span>{formatDate(scoreHistory[0]?.recordedAt)}</span>
+                      <span>{formatDate(scoreHistory[scoreHistory.length - 1]?.recordedAt)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-ink-muted">
+                    Nothing to plot yet. A run that did not finish is counted but has no scores, so
+                    the history stays empty until one completes.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section aria-labelledby="gaps-heading" className="panel p-5 sm:p-7">
+              <h2 id="gaps-heading" className="text-base font-semibold">
+                Skills you keep missing
+              </h2>
+              <p className="mt-1.5 text-sm text-ink-muted">
+                Counted across every analysis. A skill that comes up repeatedly is the one worth
+                learning next.
+              </p>
+
+              <ul className="mt-6 space-y-3.5">
+                {topSkillGaps.length > 0 ? (
+                  topSkillGaps.map((gap) => (
+                    <li key={gap.skill}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="truncate text-sm text-ink">{gap.skill}</span>
+                        <span data-numeric="" className="text-xs text-ink-subtle">
+                          {gap.occurrences}×
+                        </span>
+                      </div>
+                      <div
+                        aria-hidden="true"
+                        className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-sunken"
+                      >
+                        <span
+                          className="block h-full rounded-full bg-accent-500"
+                          style={{ width: `${Math.round((gap.occurrences / busiestGap) * 100)}%` }}
+                        />
+                      </div>
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-sm text-ink-muted">
+                    No repeated gaps — your resume covered what these postings asked for.
+                  </li>
+                )}
+              </ul>
+            </section>
+          </div>
+
+          <section aria-labelledby="recent-heading" className="panel p-5 sm:p-7">
+            <div className="flex items-center justify-between gap-4">
+              <h2 id="recent-heading" className="text-base font-semibold">
+                Recent analyses
+              </h2>
+              <Link to="/analyses" className="btn btn-ghost text-sm">
+                View all
+                <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            </div>
+
+            <ul className="mt-5 divide-y divide-line">
+              {recentAnalyses.length === 0 ? (
+                <li className="text-sm text-ink-muted">
+                  Nothing completed yet.{' '}
+                  <Link to="/analyses/new" className="font-medium text-brand-700 hover:underline">
+                    Run an analysis
+                  </Link>
+                  .
+                </li>
+              ) : null}
+
+              {recentAnalyses.map((analysis) => (
+                <li key={analysis.id} className="py-3.5 first:pt-0 last:pb-0">
+                  <Link
+                    to={`/analyses/${analysis.id}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg hover:text-brand-700"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-ink">
+                        {analysis.jobTitle}
+                        {analysis.company ? (
+                          <span className="font-normal text-ink-muted"> · {analysis.company}</span>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-ink-subtle">
+                        {analysis.resumeLabel} · {formatRelative(analysis.createdAt)}
+                      </span>
+                    </span>
+
+                    {analysis.status === 'FAILED' ? (
+                      <span className="chip text-warning-600">Did not finish</span>
+                    ) : (
+                      <ScorePill score={analysis.overallScore} />
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section aria-label="Your library" className="grid gap-4 sm:grid-cols-2">
+            <Link to="/resumes" className="card flex items-center gap-4 p-5 hover:border-line-strong">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600/10 text-brand-600">
+                <FileText size={17} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-ink">Your resumes</span>
+                <span className="mt-1 block text-xs text-ink-subtle">
+                  {count(counts.resumes, 'version')} uploaded
+                </span>
+              </span>
+              <ArrowRight size={16} className="shrink-0 text-ink-subtle" aria-hidden="true" />
+            </Link>
+
+            <Link to="/analyses/new" className="card flex items-center gap-4 p-5 hover:border-line-strong">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500/10 text-accent-600">
+                <Briefcase size={17} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-ink">Job descriptions</span>
+                <span className="mt-1 block text-xs text-ink-subtle">
+                  {count(counts.jobDescriptions, 'posting')} saved
+                </span>
+              </span>
+              <ArrowRight size={16} className="shrink-0 text-ink-subtle" aria-hidden="true" />
+            </Link>
+          </section>
+        </div>
+      )}
+    </>
   )
 }

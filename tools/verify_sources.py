@@ -79,8 +79,14 @@ def regex_position(out: list[str]) -> bool:
     return not tail or tail[-1] in REGEX_PRECEDERS
 
 
-def strip_literals(source: str, java: bool = False, keep_strings: bool = False) -> str:
-    """Remove comments, and unless keep_strings is set, string bodies too."""
+def strip_literals(source: str, java: bool = False, keep_strings: bool = False,
+                   keep_lines: bool = False) -> str:
+    """Remove comments, and unless keep_strings is set, string bodies too.
+
+    `keep_lines` replaces a block comment with the newlines it spanned, so an offset in
+    the result still maps to the right line in the file. Callers that report a line
+    number to a human want that; callers that only match patterns do not care.
+    """
     out = []
     i = 0
     n = len(source)
@@ -92,10 +98,13 @@ def strip_literals(source: str, java: bool = False, keep_strings: bool = False) 
                 i += 1
             continue
         if two == "/*":
+            start = i
             i += 2
             while i < n and source[i:i + 2] != "*/":
                 i += 1
             i += 2
+            if keep_lines:
+                out.append("\n" * source[start:i].count("\n"))
             continue
         if java and source[i:i + 3] == '"""':
             start = i
@@ -684,11 +693,19 @@ def verify_security(root: Path) -> None:
 VOID_ELEMENTS = {"br", "hr", "img", "input", "meta", "link", "source", "path", "circle",
                  "rect", "line", "polyline", "polygon", "area", "col", "embed", "track", "use"}
 
+# The one thing that separates a tag from a comparison without parsing JavaScript: JSX
+# forbids whitespace between `<` and the tag name, and every binary operator in this
+# codebase is spaced (ESLint and Prettier both enforce it). So `< b` is a comparison and
+# `<b` is a tag. `<=`, `<<` and `<3` fall out for free — the next character is not a
+# letter. Looking at the character *before* the `<` instead cannot work: JSX text is
+# arbitrary prose, so `Resume<span>` and `return <p>` both put a word character there.
+TAG_START = re.compile(r"<(/?)([A-Za-z][\w.:-]*)")
+
 
 def verify_jsx_nesting(root: Path) -> None:
     for path in sorted((root / "frontend" / "src").rglob("*.jsx")):
         rel = path.relative_to(root).as_posix()
-        code = strip_literals(path.read_text(encoding="utf-8"))
+        code = strip_literals(path.read_text(encoding="utf-8"), keep_lines=True)
         stack: list[tuple[str, int]] = []
         problem = None
 
@@ -698,10 +715,10 @@ def verify_jsx_nesting(root: Path) -> None:
             if code[i] != "<":
                 i += 1
                 continue
-            # `a < b` is a comparison, not a tag.
-            prev = next((c for c in reversed(code[:i]) if not c.isspace()), "")
-            closing = re.match(r"</\s*([A-Za-z][\w.:-]*)\s*>", code[i:])
-            opening = re.match(r"<\s*([A-Za-z][\w.:-]*)", code[i:])
+            # `a < b` is a comparison, not a tag; see TAG_START.
+            tag = TAG_START.match(code[i:])
+            closing = tag if tag and tag.group(1) else None
+            opening = tag if tag and not tag.group(1) else None
             fragment_open = re.match(r"<>", code[i:])
             fragment_close = re.match(r"</>", code[i:])
             line = code[:i].count("\n") + 1
@@ -718,7 +735,7 @@ def verify_jsx_nesting(root: Path) -> None:
                 i += 2
                 continue
             if closing:
-                name = closing.group(1)
+                name = closing.group(2)
                 if not stack:
                     problem = f"line {line}: </{name}> closes nothing"
                 elif stack[-1][0] != name:
@@ -728,9 +745,8 @@ def verify_jsx_nesting(root: Path) -> None:
                     stack.pop()
                 i += closing.end()
                 continue
-            if opening and prev not in {"=", "<", ">", "+", "-", "*", "/", "!", "&", "|", "?"} \
-                    or (opening and prev in {"(", "{", ",", "=", ">", "", ";", ":"}):
-                name = opening.group(1)
+            if opening:
+                name = opening.group(2)
                 # Walk to the end of the tag, skipping nested braces in attributes.
                 j = i + opening.end()
                 depth = 0

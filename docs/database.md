@@ -234,10 +234,10 @@ skill that slugs wrongly does not error, it just becomes a second skill nobody e
 Aliases are globally unique because resolution has to be deterministic. If `k8s` could belong to
 two skills, which skill a resume matched would depend on row order.
 
-### `analysis_keywords` and `analysis_section_scores`
+### `analysis_keywords`, `analysis_section_scores` and `analysis_score_notes`
 
-Both are `@ElementCollection` tables — child rows with no identity of their own, no id column, and
-no life outside their analysis.
+All three are `@ElementCollection` tables — child rows with no identity of their own, no id column,
+and no life outside their analysis.
 
 `analysis_keywords` holds `kind` (`MATCHED, SUGGESTED, ABSENT`), `term` and `placement`.
 `placement` is the reason this is a table and not a list of strings: a suggested keyword always
@@ -246,6 +246,14 @@ stuffing tool, and the product refuses to be one.
 
 `analysis_section_scores` holds `section` (`CONTACT, SUMMARY, SKILLS, EXPERIENCE, PROJECTS,
 EDUCATION, CERTIFICATIONS, FORMATTING`), `score` and `note`.
+
+`analysis_score_notes` holds `label`, `earned`, `out_of` and `comment` — one row per component of a
+score, which together are why the number is the number ("Required skills: 22 of 30 — 6 of 8 named").
+It is stored rather than recomputed, and that is the whole point of the table. The scores come from a
+skill catalogue and a set of weights that both change as the product grows, so recomputing the
+reasons when somebody opens a three-month-old analysis would explain it with today's rules and
+quietly disagree with the number stored beside them. Storing them makes an old analysis as
+answerable as a fresh one, which is the difference between a score and a verdict.
 
 ## Decisions worth defending
 

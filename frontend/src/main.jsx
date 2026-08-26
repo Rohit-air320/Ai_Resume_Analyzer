@@ -3,18 +3,25 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { AuthProvider } from './features/auth/AuthProvider.jsx'
+import { ThemeProvider } from './features/theme/ThemeProvider.jsx'
 import './index.css'
 
 /**
  * AuthProvider sits inside BrowserRouter, because the route guard it feeds needs a
  * router to redirect with, and outside App, because every route reads the session.
+ *
+ * ThemeProvider is outermost: it writes a class on `<html>` rather than rendering
+ * anything, so it has no reason to re-run when a route changes, and the toggle in the
+ * top bar must keep working on the pages that sit outside the auth guard.
  */
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   </React.StrictMode>,
 )

@@ -134,6 +134,14 @@ export function AuthProvider({ children }) {
     forget()
   }, [forget])
 
+  // The profile screen owns the only other place the user record changes. Handing it a
+  // setter keeps one copy of the session: without this, renaming yourself would update
+  // the form and leave the old name in the top bar until the next reload, which reads as
+  // "the save did not work". It replaces the user only — never the token or the status.
+  const applyUser = useCallback((user) => {
+    setSession((current) => (current.user ? { ...current, user } : current))
+  }, [])
+
   const value = useMemo(() => ({
     status: session.status,
     user: session.user,
@@ -142,7 +150,8 @@ export function AuthProvider({ children }) {
     signIn,
     signUp,
     signOut,
-  }), [session, signIn, signUp, signOut])
+    applyUser,
+  }), [session, signIn, signUp, signOut, applyUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

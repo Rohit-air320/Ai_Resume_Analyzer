@@ -380,6 +380,256 @@ it was measured against.
 
 `204`. Nothing on disk to clean up. `404` if it does not exist or is not yours.
 
+## Analyses
+
+An analysis is one resume measured against one posting at one moment, and unlike a posting's parse it
+is **stored rather than recomputed**. The two rules look inconsistent side by side and they answer
+different questions. A posting's parse answers "what does this job need?", which should improve as the
+catalogue grows. An analysis answers "how did my resume score?", and a number that quietly changed
+because the weights changed would make the history chart a lie — the line would move for reasons the
+user never acted on. So the parse is always fresh and the score is always the score that was reported.
+
+The scores are computed in Java from the extracted text and the parsed posting. The model, when one is
+configured, writes the prose. That split is the whole architecture of the feature: a provider outage
+degrades the wording and never the numbers, so `POST /api/analyses` has no `503` — the request
+succeeds, the offline writer produces the advice, and `provenance.modelWritten` is `false` so the UI
+can say where the words came from.
+
+Analysis is **synchronous**. There is no job id, no queue and nothing to poll: the request takes a few
+seconds and returns the finished document. The processing screen in the UI is a real wait rather than a
+progress bar over an empty state, and the alternative — a `202` plus a status endpoint — buys
+scalability this product does not need at the cost of a state machine every client has to implement.
+
+### `POST /api/analyses`
+
+JSON with `resumeId` and `jobDescriptionId`, both required. `201` with the complete analysis below.
+
+**Not idempotent, on purpose.** Analysing the same pair twice creates two rows, because re-running
+after an edit is how somebody checks whether the edit helped, and the second number next to the first
+*is* the product. A `409` here would refuse the main loop.
+
+`400` if either id is missing or is not a UUID. `404` if either document does not exist or is not
+yours — checked before anything is read, so a resume belonging to somebody else is never opened, let
+alone scored. `422 UNREADABLE_FILE` if the resume has no extracted text: a scanned PDF uploads
+successfully and scores nothing, and a number computed from an empty string would measure the
+extraction while reading as a verdict on the CV. Nothing is written on a `422`, so a refused request
+leaves no point on the history chart.
+
+### Analysis response
+
+```json
+{
+  "id": "c4f0a2b8-6d31-4e57-8a19-7b2e5f0c9d43",
+  "status": "COMPLETED",
+  "target": {
+    "resumeId": "9f3c1a77-2e84-4b0d-9c56-1a7e4f8b2d31",
+    "resumeLabel": "Backend CV",
+    "jobDescriptionId": "b71c0d5e-3f2a-4c19-9d7e-2a5f8c1b4e60",
+    "jobTitle": "Backend Engineer",
+    "company": "Acme"
+  },
+  "overallScore": 78,
+  "atsScore": 84,
+  "jobMatchScore": 81,
+  "skillsMatchScore": 75,
+  "keywordScore": 68,
+  "experienceScore": 90,
+  "scoreBreakdown": [
+    { "label": "Required skills", "earned": 22, "outOf": 30, "comment": "6 of 8 named in the posting" },
+    { "label": "Quantified bullets", "earned": 8, "outOf": 10, "comment": "7 of 9 bullets carry a number" }
+  ],
+  "overallFeedback": "A strong match on the backend stack. The gap is deployment …",
+  "detectedSkills": [
+    { "name": "Java", "slug": "java", "status": "STRONG", "importance": "CRITICAL", "note": "Built 14 REST services in Java and Spring Boot …" }
+  ],
+  "missingSkills": [
+    { "name": "Docker", "slug": "docker", "status": "MISSING", "importance": "NICE_TO_HAVE", "note": "Asked for under: Nice to have" }
+  ],
+  "matchingKeywords": ["code review", "microservices"],
+  "missingKeywords": ["ci/cd", "observability"],
+  "suggestedKeywords": [
+    { "term": "CI/CD", "placement": "Experience — the settlement module bullet" }
+  ],
+  "sectionScores": [
+    { "section": "CONTACT", "score": 100, "note": "Email, phone and a GitHub link" },
+    { "section": "EXPERIENCE", "score": 82, "note": "Strong bullets; two lack a metric" }
+  ],
+  "improvements": [
+    { "title": "Name your deployment tooling", "detail": "…", "priority": "HIGH", "resourceUrl": null }
+  ],
+  "recommendedProjects": [
+    { "title": "Containerise the Ledger Reconciler", "detail": "…", "priority": "MEDIUM", "resourceUrl": null }
+  ],
+  "learningRecommendations": [
+    { "title": "Docker fundamentals", "detail": "…", "priority": "HIGH", "resourceUrl": "https://…" }
+  ],
+  "provenance": {
+    "writtenBy": "Structural analysis (no model)",
+    "modelWritten": false,
+    "analyzerVersion": "1.0.0",
+    "processingMs": 412
+  },
+  "createdAt": "2026-08-25T09:14:02.117Z",
+  "completedAt": "2026-08-25T09:14:02.529Z"
+}
+```
+
+The field names are the spec's field names, and they are the same words from the prompt that asks the
+model for them, through the columns they land in, to the chart that reads them. Renaming a concept at a
+layer boundary is how a codebase ends up with three words for one idea and a mapping class to translate
+between them.
+
+`GET /api/analyses/{id}` returns **this exact document**, character for character. The create response
+is not a rendering of the outcome that just ran; it is a read of the row that was written, through the
+same mapper. A client can treat the two interchangeably, and a mapping bug shows up in both rather than
+hiding in whichever one has fewer tests.
+
+Six scores, because "your resume scores 78" is not advice. `atsScore` is about the document — parseable
+sections, real headings, no tables — and `jobMatchScore` is about the fit, and those two move
+independently: a beautifully formatted resume for the wrong job scores high on one and low on the
+other, and only splitting them says which. `scoreBreakdown` is the arithmetic, read from stored notes
+rather than recomputed, so a three-month-old analysis explains itself with the rules it was scored
+under. A note with `outOf: 0` carries context rather than points.
+
+| Range | Band |
+| --- | --- |
+| 0–39 | Needs major improvement |
+| 40–59 | Needs improvement |
+| 60–74 | Moderate match |
+| 75–89 | Strong match |
+| 90–100 | Excellent match |
+
+`detectedSkills` and `missingSkills` are one table filtered two ways, each ordered by importance so a
+critical gap is never the ninth row. `slug` is `null` for a skill the catalogue has not learned yet —
+the honest answer, rather than a slug invented on the way out — and `note` is the evidence: the line in
+the resume that supports the verdict, or the heading the posting asked under. That column is what keeps
+the advice checkable. "Strengthen your Spring Boot bullet" is only legitimate if there is a Spring Boot
+bullet, and the note says which one.
+
+Every entry in `suggestedKeywords` carries a `placement`, and that is a hard rule rather than a nicety:
+a term with no honest answer to "where would this go in your resume?" is dropped before it reaches a
+column. A bare list of keywords to add is a keyword stuffing tool, and this product refuses to be one.
+
+`provenance` is surfaced deliberately. A user reading advice should know whether a model read their
+bullet points or whether the suggestions were derived from the structural findings, because the two
+deserve different amounts of trust. `writtenBy` is a model name or a description of the offline writer,
+never a key.
+
+`failureReason` is **absent** on a completed analysis rather than `null`, like every other empty field —
+the API omits nulls throughout. It is present, and safe to display, on a `FAILED` row.
+
+The raw model response is never returned, and on a successful run it is never even stored. The parts
+worth keeping are already rows; the parts that failed validation are the parts we decided not to stand
+behind.
+
+### `GET /api/analyses`
+
+Your history, newest first. **Scores and labels only** — `overallScore`, `atsScore`, `jobMatchScore`,
+the job title, the company and the resume label. The skills, keywords, section scores and advice come
+with a single analysis; including them here would mean four child collections fetched per row to render
+a table of numbers. This is enforced by the query rather than by filtering on the way out: the list
+reads an interface projection that has no accessor for those columns at all.
+
+### `GET /api/analyses/{id}`
+
+One analysis, in full. `404 NOT_FOUND` if it does not exist or is not yours — never `403`, which would
+confirm that the row exists.
+
+### `DELETE /api/analyses/{id}`
+
+`204`. The skills, keywords, section scores and recommendations go with it, since none of them has any
+life outside their analysis. The resume and the posting are untouched and can be analysed again.
+`404` if it does not exist or is not yours, and in that case nothing is deleted — the owner is in the
+`delete` statement as well as in the lookup, because a delete that answers `404` and removes the row
+anyway is the worst outcome available.
+
+## Dashboard
+
+### `GET /api/dashboard`
+
+One request that fills one screen.
+
+```json
+{
+  "counts": { "analyses": 7, "resumes": 2, "jobDescriptions": 5 },
+  "scores": { "average": 74, "best": 86, "latest": 78 },
+  "scoreHistory": [
+    { "recordedAt": "2026-08-19T11:02:44.000Z", "overall": 61, "ats": 70, "jobMatch": 58 }
+  ],
+  "recentAnalyses": [],
+  "topSkillGaps": [ { "skill": "Docker", "occurrences": 4 } ],
+  "targetRole": "Backend Engineer"
+}
+```
+
+This endpoint is shaped like a screen rather than like a resource, which is a deliberate exception to
+how the rest of this API is organised. The alternative is five round trips — counts, averages, a trend,
+a recent list and a gap aggregation — on the page a user sees first and most often. Five REST-pure
+requests to render one view is a purity nobody logging in is served by.
+
+`scores` is the part worth reading closely: each of the three fields is **omitted when there is nothing
+to report**. SQL's `avg()` over no rows is null, the service passes that null through and the mapper
+leaves it out, so a client can tell "nothing scored yet" from "scored zero". Defaulting it would greet a
+brand-new account with a chart reporting an overall score of 0, which reads as a judgement of a resume
+nobody has looked at.
+
+`scoreHistory` is the last thirty analyses in ascending time order, ready to plot left to right.
+`recentAnalyses` is the five newest, in the same shape as a row of `GET /api/analyses`. `topSkillGaps`
+is the six skills missed most often across the whole account, with a count — the one thing no single
+analysis can tell you, and the number that turns "you are missing Docker" into "you have been missing
+Docker in four applications". It is a `group by` over one table, which is the argument for a relational
+store here rather than analyses stored as documents.
+
+`targetRole` is echoed from the profile so the empty state can be specific.
+
+## Recommendations
+
+### `GET /api/recommendations`
+
+Every piece of advice across the account, newest first, capped at 100. Optional
+`?type=IMPROVEMENT|LEARNING|PROJECT|KEYWORD` narrows it; a value outside those four is a `400` rather
+than an empty list, because an empty list would let a client's typo look like "you have no learning
+topics".
+
+Each item carries the `analysisId` and the `jobTitle` it came from. That context is the reason this is a
+joined projection rather than a list of recommendation rows: "learn Docker" means something different
+under one job title than under another, and a feed that pooled advice from six applications without
+saying which was which would be advice about nothing in particular.
+
+These rows have no owner column of their own — a recommendation's owner is its analysis's owner — so
+the ownership filter here is a join two levels deep. It is the endpoint where a missing filter would be
+least visible, and the one place the privacy tests check a count as well as a list.
+
+## Profile
+
+### `GET /api/profile`
+
+The signed-in user: `id`, `email`, `fullName`, `targetRole`, `experienceLevel`, `role`, `memberSince`
+and `lastLoginAt`. The two optional fields are omitted until they are set.
+
+### `PUT /api/profile`
+
+`fullName` (required, ≤120 characters), `targetRole` (optional, ≤120) and `experienceLevel` (optional,
+one of `ENTRY, JUNIOR, MID, SENIOR, LEAD`). `200` with the updated profile.
+
+Note what the request cannot say: there is no email, no password and no role. Each of those is a
+different operation with a different guard — changing an email needs re-verification, changing a
+password needs the old one, and changing a role is not something a user does to themselves — and
+folding them into one "update profile" request is how an endpoint grows a nullable field that quietly
+grants an account administrator rights. Unknown properties are ignored, so sending `"role": "ADMIN"`
+here is not refused, it simply has nowhere to land.
+
+There is no id in either path. The id is the token, so there is nothing to tamper with and no ownership
+check to forget.
+
+`PUT` **replaces**: a field left out is cleared, not preserved. A record cannot distinguish "leave it
+alone" from "I no longer have one" — both arrive as null — and replacement is the honest reading of the
+two. A `PATCH` that could tell them apart would need a wrapper type per field, and this endpoint is
+three fields wide.
+
+An over-long name is a `400` rather than a truncation. Silently shortening somebody's own name is worse
+than telling them it is too long: they would find out from a rendered page later, if at all.
+
 ## Endpoints
 
 | Method | Path | Auth | Phase |
