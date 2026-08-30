@@ -4,6 +4,7 @@ import SiteHeader from '../components/marketing/SiteHeader.jsx'
 import SiteFooter from '../components/marketing/SiteFooter.jsx'
 import AnalysisReport from '../components/analysis/AnalysisReport.jsx'
 import { DEMO_ANALYSIS } from '../features/demo/demoAnalysis.js'
+import useDocumentTitle from '../lib/useDocumentTitle.js'
 
 /**
  * The full report, readable without an account.
@@ -23,13 +24,14 @@ import { DEMO_ANALYSIS } from '../features/demo/demoAnalysis.js'
  * whose it is invites the reader to think it is theirs.
  */
 export default function Demo() {
+  useDocumentTitle('Sample analysis')
   const target = DEMO_ANALYSIS.target
 
   return (
     <div className="min-h-screen">
       <SiteHeader />
 
-      <main className="mx-auto max-w-5xl px-5 py-12 sm:px-8 sm:py-16">
+      <main id="main" className="mx-auto max-w-5xl px-5 py-12 sm:px-8 sm:py-16">
         <div className="panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6">
           <FlaskConical size={20} className="shrink-0 text-brand-600" aria-hidden="true" />
           <p className="text-sm leading-relaxed text-ink-muted">

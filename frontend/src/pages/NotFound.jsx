@@ -3,6 +3,7 @@ import { Compass } from 'lucide-react'
 import SiteHeader from '../components/marketing/SiteHeader.jsx'
 import SiteFooter from '../components/marketing/SiteFooter.jsx'
 import { useAuth } from '../features/auth/authContext.js'
+import useDocumentTitle from '../lib/useDocumentTitle.js'
 
 /**
  * The page for an address that does not exist.
@@ -17,6 +18,7 @@ import { useAuth } from '../features/auth/authContext.js'
  * place.
  */
 export default function NotFound() {
+  useDocumentTitle('Page not found')
   const location = useLocation()
   const { isAuthenticated } = useAuth()
 
@@ -24,7 +26,7 @@ export default function NotFound() {
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
 
-      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-5 py-20 sm:px-8">
+      <main id="main" className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-5 py-20 sm:px-8">
         <Compass size={22} className="text-ink-subtle" aria-hidden="true" />
 
         <p className="eyebrow mt-6">Not found</p>

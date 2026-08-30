@@ -12,12 +12,23 @@ import { useAuth } from '../../features/auth/authContext.js'
  *
  * Links here are routes, never anchors. An anchor to `#how-it-works` would be a dead link on
  * the demo and the not-found page, which use this same header.
+ *
+ * The skip link lives here rather than on each page, because "here" is the first thing in the
+ * document on all three of them and a skip link that is not first is decoration. The signed-in
+ * shell carries its own, for the same reason and with the same target — `#main`.
  */
 export default function SiteHeader() {
   const { isAuthenticated } = useAuth()
 
   return (
     <header className="border-b border-line">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-600 focus:px-4 focus:py-2 focus:text-sm focus:text-white"
+      >
+        Skip to content
+      </a>
+
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-5 sm:px-8">
         <Link to="/" className="font-display text-lg font-semibold tracking-tight">
           Resume<span className="text-brand-600">IQ</span>

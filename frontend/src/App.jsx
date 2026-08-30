@@ -12,6 +12,7 @@ import NotFound from './pages/NotFound.jsx'
 import Profile from './pages/Profile.jsx'
 import Recommendations from './pages/Recommendations.jsx'
 import Resumes from './pages/Resumes.jsx'
+import Settings from './pages/Settings.jsx'
 import SignUp from './pages/SignUp.jsx'
 import SkillGap from './pages/SkillGap.jsx'
 import SystemCheck from './pages/SystemCheck.jsx'
@@ -34,9 +35,9 @@ import SystemCheck from './pages/SystemCheck.jsx'
  * why they are top-level rather than nested under `/analyses/:id`: neither is a view of a
  * single result, and both are reachable with no analysis selected.
  *
- * Settings is the one sidebar destination without a route. The sidebar renders it disabled
- * from the same list, so the app has no dead link rather than an empty page pretending to
- * be a feature.
+ * Settings arrived in Phase 11, which empties the sidebar's "Soon" list: every destination
+ * the nav shows is now a page, and `tools/verify_sources.py` fails the build if a nav item
+ * marked ready has no route or a signed-in route has no nav item.
  *
  * The four public routes stay public for a signed-in visitor too. `/` and `/demo` explain and
  * demonstrate the product, and redirecting somebody away from them because they have a session
@@ -65,6 +66,7 @@ export default function App() {
           <Route path="/skill-gap" element={<SkillGap />} />
           <Route path="/recommendations" element={<Recommendations />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>
 

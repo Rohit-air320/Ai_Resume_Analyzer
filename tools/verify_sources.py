@@ -2212,6 +2212,242 @@ def verify_skill_catalog(root: Path) -> None:
               "resumeiq.seed.skills must exist for ResumeIqProperties.Seed to bind")
 
 
+def without_comments(source: str) -> str:
+    """
+    Drop comments so a check can read code rather than prose.
+
+    Phase 11 needed this immediately: the first run of `verify_shell` failed three checks
+    that were all correct about the code and wrong about the file, because the doc comment
+    above `ThemeProvider` explains the `sessionStorage` bug it fixed, and the one above
+    `AppLayout` mentions `<main>` while describing where focus goes. A check that greps a
+    whole file cannot tell an implementation from an account of one, so the comments go.
+
+    `//` is only honoured at the start of a line. A trailing one is rare in this codebase
+    and a naive rule would truncate every `https://` URL it met.
+    """
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+
+
+def verify_shell(root: Path) -> None:
+    """
+    Phase 11: navigation, theme and the keyboard contract.
+
+    Three classes of bug live here, and none of them is visible in a screenshot.
+
+    A sidebar row whose route does not exist is a dead click; a route with no row is a page
+    nobody can reach. Both are one edit away at all times, because the nav is a list in one
+    file and the routes are JSX in another, so this reads both and compares them.
+
+    A theme preference is stored in one place and read in two — the provider and the inline
+    script in `index.html` that runs before first paint. Phase 11 found them reading different
+    storages, which is invisible in a component test and shows up only as a flash of the wrong
+    theme on a second visit. The key is compared across both files.
+
+    And the accessibility invariants — a skip link that targets a `<main>` that carries the id
+    it names, one accessible name per control, a `:focus-visible` ring, a reduced-motion block
+    that actually wins — are exactly the things a later phase removes by accident while moving
+    markup around.
+    """
+    frontend = root / "frontend"
+    src = frontend / "src"
+    app_file = src / "App.jsx"
+    if not app_file.is_file():
+        return
+
+    nav_file = src / "components" / "layout" / "navItems.js"
+    layout_file = src / "components" / "layout" / "AppLayout.jsx"
+    header_file = src / "components" / "marketing" / "SiteHeader.jsx"
+    css_file = src / "index.css"
+    html_file = frontend / "index.html"
+    provider_file = src / "features" / "theme" / "ThemeProvider.jsx"
+    context_file = src / "features" / "theme" / "themeContext.js"
+    settings_file = src / "pages" / "Settings.jsx"
+    main_file = src / "main.jsx"
+    future_file = src / "lib" / "routerFuture.js"
+
+    # ---- the sidebar against the route table ---------------------------------------
+    nav_source = read_source(nav_file)
+    items = re.findall(
+        r"\{\s*to:\s*'([^']+)',\s*label:\s*'([^']+)',\s*icon:\s*\w+,\s*ready:\s*(true|false)\s*\}",
+        nav_source,
+    )
+    check("navItems.js still parses as a list of destinations", len(items) >= 8,
+          f"matched {len(items)} items — the shape of the list changed, so the checks below are blind")
+
+    app_source = read_source(app_file)
+    guard_at = app_source.find("<RequireAuth />")
+    catch_all_at = app_source.find('path="*"')
+    guarded = app_source[guard_at:catch_all_at] if 0 <= guard_at < catch_all_at else ""
+    check("the auth-guarded route block is findable", bool(guarded),
+          "RequireAuth must precede the catch-all route for this check to read the guarded block")
+
+    all_paths = set(re.findall(r'path="([^"]+)"', app_source))
+    guarded_paths = set(re.findall(r'path="([^"]+)"', guarded))
+
+    labels = [label for _, label, _ in items]
+    check("sidebar labels are unique", len(set(labels)) == len(labels),
+          "two rows with one name are indistinguishable to anybody navigating by name")
+
+    nav_targets = {to for to, _, _ in items}
+    for to, label, ready in items:
+        if ready == "true":
+            check(f"sidebar '{label}' points at a real route", to in all_paths,
+                  f"{to} is offered as a link and no route renders it")
+            check(f"sidebar '{label}' is behind the auth guard", to in guarded_paths,
+                  f"{to} is in the sidebar, so it is a signed-in page and belongs inside RequireAuth")
+        else:
+            check(f"sidebar '{label}' is marked Soon and has no route yet", to not in all_paths,
+                  f"{to} exists as a route but the sidebar still renders it disabled")
+
+    for path in sorted(guarded_paths):
+        if ":" in path:
+            continue
+        check(f"route {path} is reachable from the sidebar", path in nav_targets,
+              "a signed-in page with no navigation row is a page nobody finds and nobody tests")
+
+    # Every guarded page renders PageHeader, which owns its h1 and its document title. A page
+    # with its own h1 would ship two, and one with neither would inherit the marketing title.
+    imports = dict(re.findall(r"import (\w+) from '\./pages/(\w+\.jsx)'", app_source))
+    for path, element in re.findall(r'path="([^"]+)" element=\{<(\w+) />\}', guarded):
+        file_name = imports.get(element)
+        if not file_name:
+            continue
+        page = src / "pages" / file_name
+        if not page.is_file():
+            continue
+        page_source = read_source(page)
+        check(f"{file_name} opens with PageHeader", "PageHeader" in page_source,
+              f"{path} would render without an h1 and keep the marketing document title")
+        check(f"{file_name} does not write its own h1", "<h1" not in page_source,
+              "PageHeader already renders the h1; a second one makes the page's outline ambiguous")
+
+    # ---- one main element, and skip links that reach it -----------------------------
+    for path in walk_files(src):
+        if path.suffix != ".jsx":
+            continue
+        source = without_comments(read_source(path))
+        for match in re.finditer(r"<main\b([^>]*)>", source):
+            check(f"{path.name}: <main> carries id=\"main\"", 'id="main"' in match.group(1),
+                  "the skip link targets #main, so a main element without the id is a link to nowhere")
+
+    layout_source = read_source(layout_file)
+    header_source = read_source(header_file)
+    check("the signed-in shell has a skip link", 'href="#main"' in layout_source,
+          "reaching the page by keyboard would mean tabbing past the whole sidebar")
+    check("the public header has a skip link", 'href="#main"' in header_source,
+          "the landing, demo and not-found pages share this header and its nav")
+    main_tag = re.search(r"<main\b([^>]*)>", without_comments(layout_source))
+    check("the shell's main element is findable", bool(main_tag), "the checks below read its attributes")
+    if main_tag:
+        attributes = main_tag.group(1)
+        check("the shell can move focus to main", "tabIndex={-1}" in attributes,
+              "an element without a tabindex cannot be focused, so a route change would leave focus on the nav")
+        check("the shell holds a ref to main", "ref={mainRef}" in attributes,
+              "the route-change effect focuses through this ref; without it the effect is a no-op")
+        check("main opts out of the focus ring", "data-focus-target" in attributes,
+              "programmatic focus would draw a ring, so every navigation would look like a stray click")
+    check("the drawer is a modal dialog", 'role="dialog"' in layout_source and 'aria-modal="true"' in layout_source,
+          "an overlay that is not announced as a dialog is a page a screen reader can still walk behind")
+    check("the drawer has one control named 'Close navigation'",
+          layout_source.count('aria-label="Close navigation"') == 1,
+          "the backdrop used to carry the same name as the close button — two controls, one name")
+    check("the drawer captures its node at effect setup", "const drawer = drawerRef.current" in layout_source,
+          "reading a ref in an effect cleanup finds null, and focus is silently never returned")
+
+    # ---- one theme preference, one storage key --------------------------------------
+    context_source = read_source(context_file)
+    provider_source = read_source(provider_file)
+    provider_code = without_comments(provider_source)
+    html_source = read_source(html_file)
+
+    prefs_match = re.search(r"THEME_PREFERENCES = \[([^\]]+)\]", context_source)
+    preferences = re.findall(r"'(\w+)'", prefs_match.group(1)) if prefs_match else []
+    check("the theme has three states", preferences == ["system", "light", "dark"],
+          f"found {preferences} — without 'system' there is no way back to the operating system setting")
+
+    key_match = re.search(r"STORAGE_KEY = '([^']+)'", provider_source)
+    check("the provider names its storage key", bool(key_match), "STORAGE_KEY is read by the check below")
+    if key_match:
+        check("the pre-paint script reads the key the provider writes",
+              f"'{key_match.group(1)}'" in html_source,
+              "two mechanisms for one decision means a flash of the wrong theme on the second visit")
+
+    check("the theme preference is not kept in sessionStorage", "sessionStorage" not in provider_code,
+          "the inline script in index.html reads localStorage; the two never met, which was the Phase 11 bug")
+    check("the theme preference is kept in localStorage", "localStorage" in provider_code,
+          "a preference the pre-paint script cannot read is a preference that flashes")
+    check("the pre-paint script handles all three stored values",
+          "'light'" in html_source and "'dark'" in html_source,
+          "a stored 'system' must fall back to the OS query rather than silently meaning light")
+    check("index.html does not re-declare scroll-smooth as a class",
+          'class="scroll-smooth"' not in html_source,
+          "a class beats an element selector, so the reduced-motion override in index.css would lose")
+    check("index.html declares a language", 'lang="en"' in html_source,
+          "a screen reader picks its voice from this attribute")
+    check("index.html sets the mobile viewport",
+          'name="viewport"' in html_source and "width=device-width" in html_source,
+          "without it a phone renders the desktop layout scaled down and every breakpoint is wrong")
+
+    settings_source = read_source(settings_file)
+    option_values = re.findall(r"value:\s*'(system|light|dark)'", settings_source)
+    check("the settings page offers every theme preference, in order", option_values == preferences,
+          f"page offers {option_values}, the provider accepts {preferences}")
+
+    # ---- the css invariants the whole product leans on -------------------------------
+    css_source = read_source(css_file)
+    check("a focus ring is declared for keyboard users", ":focus-visible" in css_source,
+          "removing it makes every control invisible to somebody tabbing through the app")
+    reduced = css_source.find("prefers-reduced-motion")
+    check("reduced motion is honoured globally", reduced != -1,
+          "each animation would otherwise need its own media query, and one will be forgotten")
+    if reduced != -1:
+        block = css_source[reduced:reduced + 600]
+        check("the reduced-motion block stops animations", "animation-duration" in block,
+              "a reduced-motion rule that only shortens transitions still animates")
+        check("the reduced-motion block cannot be outranked on scrolling",
+              "scroll-behavior: auto !important" in block,
+              "the block also carries a plain html rule, which any utility class beats — as scroll-smooth did")
+    check("long unbroken text wraps rather than widening the page", "overflow-wrap" in css_source,
+          "a 90-character URL pasted from a posting would push a card off a narrow screen")
+
+    # ---- router future flags --------------------------------------------------------
+    main_source = read_source(main_file)
+    future_source = without_comments(read_source(future_file))
+    check("the app passes the router's future flags", "future={ROUTER_FUTURE}" in main_source,
+          "router 6 warns once per unset flag, which teaches everybody to ignore the console")
+    for flag in ("v7_startTransition", "v7_relativeSplatPath"):
+        check(f"{flag} is opted into", flag in future_source,
+              "both flags are named in logV6DeprecationWarnings; missing one leaves a warning")
+
+    # ---- every screen names the browser tab ------------------------------------------
+    # A single-page app keeps the last title it was given, so a page that names no tab is
+    # not merely unlabelled — it wears the name of whatever the reader looked at before it.
+    # The call, not the import. Deleting only the call left the import behind, and the
+    # first version of this check greped for the bare name and was satisfied by it.
+    title_hook = "useDocumentTitle("
+    titled = {
+        "components/layout/PageHeader.jsx": "every signed-in page",
+        "pages/Landing.jsx": "the landing page",
+        "pages/Demo.jsx": "the sample analysis",
+        "pages/NotFound.jsx": "the not-found page",
+        "pages/SystemCheck.jsx": "the diagnostics page",
+        "features/auth/AuthLayout.jsx": "sign-in and sign-up",
+    }
+    for relative, described in titled.items():
+        source = read_source(src / relative)
+        check(f"{described} names the browser tab", title_hook in source,
+              f"{relative} would inherit the title of the page the reader came from")
+
+    for path in walk_files(src):
+        if path.suffix not in (".js", ".jsx") or "__tests__" in path.parts:
+            continue
+        if path.name == "useDocumentTitle.js":
+            continue
+        check(f"{path.name} leaves document.title to the hook", "document.title" not in read_source(path),
+              "a second writer means the last effect to run wins, which depends on render order")
+
+
 def main() -> int:
     default_root = Path(__file__).resolve().parent.parent
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else default_root
@@ -2238,6 +2474,7 @@ def main() -> int:
     verify_contract(root)
     verify_demo_fixture(root)
     verify_security(root)
+    verify_shell(root)
 
     print(f"{CHECKS_RUN} checks run")
     if WARNINGS:

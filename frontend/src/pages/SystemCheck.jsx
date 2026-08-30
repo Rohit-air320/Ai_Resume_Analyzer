@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Loader2, Moon, RefreshCw, Sun } from 'lucide-react'
 import { apiClient } from '../lib/apiClient.js'
 import { SCORE_BANDS } from '../lib/scoreBands.js'
+import useDocumentTitle from '../lib/useDocumentTitle.js'
 
 /**
  * Phase 1 setup check.
@@ -37,6 +38,7 @@ function useTheme() {
 }
 
 export default function SystemCheck() {
+  useDocumentTitle('System check')
   const [status, setStatus] = useState(STATUS.LOADING)
   const [health, setHealth] = useState(null)
   const [error, setError] = useState(null)
@@ -60,7 +62,7 @@ export default function SystemCheck() {
   }, [checkApi])
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
+    <main id="main" className="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="eyebrow">Phase 1 · Setup</p>

@@ -117,6 +117,9 @@
 
   html {
     -webkit-text-size-adjust: 100%;
+    /* Declared here and nowhere else. An earlier build also carried Tailwind's
+       `scroll-smooth` class on <html>, and a class beats an element selector — so the
+       reduced-motion override below was being ignored by the browsers that need it. */
     scroll-behavior: smooth;
   }
 
@@ -124,6 +127,10 @@
     @apply bg-bg text-ink font-sans antialiased;
     /* Every page is a column layout; horizontal overflow is always a bug. */
     overflow-x: hidden;
+    /* Resumes and postings arrive with things no designer chose: a 90-character URL,
+       a filename with no spaces, an email address in a narrow card. Inherited here so
+       one long token wraps instead of widening its container off-screen. */
+    overflow-wrap: break-word;
   }
 
   h1, h2, h3 {
@@ -140,6 +147,13 @@
     @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-bg;
   }
 
+  /* Programmatic focus — the shell moves it to <main> after a navigation — must not draw
+     a ring, or every route change would look like a click landed somewhere. `:focus-visible`
+     already excludes it; this makes the intent explicit for the one element that gets it. */
+  [data-focus-target]:focus {
+    @apply outline-none;
+  }
+
   ::selection {
     background-color: rgb(var(--brand-500) / 0.22);
   }
@@ -152,6 +166,7 @@
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
     }
   }
 }

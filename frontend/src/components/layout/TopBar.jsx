@@ -16,13 +16,20 @@ import ThemeToggle from './ThemeToggle.jsx'
  * The email is hidden below `sm` while the name stays, because on a narrow screen the
  * bar has room for one of them and the name is the one that identifies the account to
  * its owner.
+ *
+ * `navTriggerRef` belongs to the shell rather than to this bar: when the drawer closes,
+ * focus has to go back to the control that opened it, and only the shell knows the drawer
+ * closed. A ref passed down is the smallest thing that connects them — the alternative is
+ * moving the drawer's state into this component, which would make the bar responsible for
+ * a panel it does not render.
  */
-export default function TopBar({ onOpenNav }) {
+export default function TopBar({ onOpenNav, navTriggerRef }) {
   const { user, signOut } = useAuth()
 
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-bg/85 px-4 backdrop-blur sm:px-6">
       <button
+        ref={navTriggerRef}
         type="button"
         onClick={onOpenNav}
         className="btn btn-ghost px-2.5 py-2 lg:hidden"

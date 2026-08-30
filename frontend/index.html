@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="scroll-smooth">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -18,14 +18,18 @@
     />
 
     <script>
-      // Applied before first paint so the page never flashes the wrong theme.
-      // The user's explicit choice wins; otherwise follow the OS setting.
+      // Applied before first paint so the page never flashes the wrong theme, which is
+      // the whole reason the preference lives in localStorage rather than in React state.
+      //
+      // Three stored values are possible — 'system', 'light', 'dark' — and only the last
+      // two are decisions. Anything else, including a value written by an older build,
+      // falls back to the operating system rather than silently meaning "light".
       (function () {
         try {
           var stored = window.localStorage.getItem('resumeiq.theme')
+          var chosen = stored === 'dark' || stored === 'light'
           var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-          var dark = stored ? stored === 'dark' : prefersDark
-          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.classList.toggle('dark', chosen ? stored === 'dark' : prefersDark)
         } catch (error) {
           // Storage can be blocked. Falling back to the light theme is fine.
         }

@@ -221,6 +221,78 @@ Every failure returns the same JSON envelope with a stable `code` from the `Erro
 enum. The frontend maps codes to copy, so error text can change without breaking clients,
 and no client parses English. Stack traces never leave the server.
 
+## The keyboard, the theme and the tab
+
+Phase 11 was billed as responsiveness, dark mode and accessibility, and the reconnaissance
+found most of the visible half already done: the grids collapse, the drawer opens under
+`lg`, the focus ring is declared once in the base layer, and a reduced-motion query has
+been neutralising animation since the shell was built. What was missing was everything a
+screenshot cannot show, so the phase became an audit of the parts of the interface that
+only a keyboard, a screen reader or a second visit exercises. It found three defects that
+had been shipping since earlier phases, and each is worth more than the features around it.
+
+The theme had been stored in two places at once. A theme has to be applied before first
+paint or the page flashes the wrong one, which is why an inline script in `index.html` sets
+the class on `<html>` before React loads; the provider then owns it for the rest of the
+session. The script read `localStorage` and the provider wrote `sessionStorage`, so the two
+never met — a returning visitor got a correct first paint from their operating system and
+then, one render later, whatever the tab happened to remember. Both now use one key, and
+the verifier reads `STORAGE_KEY` out of the provider and asserts the same string appears in
+the HTML, because a preference split across two mechanisms is not a preference. The stored
+value is also three-valued rather than two: `system`, `light`, `dark`. Without the third
+state the first click on a two-way switch pins the app forever, and an operating system that
+turns dark at sunset stops being followed. While `system` is selected the media query is
+listened to, not merely read at startup.
+
+Reduced motion was being lost to CSS specificity. The base layer neutralises animation
+inside `@media (prefers-reduced-motion: reduce)`, but `<html>` also carried a
+`scroll-smooth` utility class, and a class outranks an element selector, so a reader who
+had asked their system for less motion still got smooth scrolling. The class is gone,
+scroll behaviour is declared only in `index.css`, and the reduced-motion block marks it
+`!important` so the next utility class cannot win either. The check is specific about that
+last point: the block contains two `scroll-behavior` declarations and only the important
+one is load-bearing, so asserting merely that the property appears would have passed while
+the bug was present — which it did, on the first attempt.
+
+The mobile drawer had two controls with one accessible name. Both the backdrop and the
+panel's close button announced themselves as "Close navigation", which is the same defect
+class as the duplicated meter label from Phase 10: navigating by name becomes a guess. The
+backdrop is now out of the accessibility tree entirely, since Escape and the labelled
+button already cover the keyboard, and the verifier counts the label.
+
+On top of the repairs, the shell gained the keyboard contract it had been missing. Opening
+the drawer moves focus into it, traps Tab inside it, locks the background from scrolling,
+and on close returns focus to the button that opened it — but only if focus was stranded on
+`document.body`, so a deliberate click elsewhere is not overridden. Getting that last part
+right required a real correction: the original code read `drawerRef.current` inside the
+effect's cleanup, which React has already nulled by then, so focus would silently never
+have come back. ESLint's `exhaustive-deps` rule flagged exactly this, and the rule was
+right. Both nodes are now captured when the effect is set up. A route change moves focus to
+`<main>`, which is why that element carries `tabIndex={-1}` and a `data-focus-target`
+attribute that opts it out of the focus ring: without the move, focus stays on a navigation
+item while the content behind it is replaced and a screen reader announces nothing; without
+the ring suppression, every navigation would look like a stray click landed somewhere.
+
+Every screen now names the browser tab through one hook. Signed-in pages get it from
+`PageHeader`, which already knows the page's title and so has nothing to keep in sync, and
+the public pages and the auth layout call the hook directly. This matters more in a
+single-page app than it looks: a title is not merely absent when nobody sets it, it is
+wrong, because the tab keeps the name of whatever the reader was looking at before. The
+verifier asserts the hook is *called* rather than merely imported — the first version of
+that check greped for the name and was satisfied by an unused import — and that nothing
+else in `src` writes `document.title`, since a second writer makes the outcome depend on
+render order.
+
+The last "Soon" row in the sidebar became a page. `/settings` offers the three theme
+preferences as native radios, reports the motion setting it detected without pretending to
+control it, signs out through the session rather than by clearing storage itself, and states
+plainly what is stored, that none of it is published, and that closing an account is not
+self-serve yet. Nothing on it is a mock-up; its test asserts the complete inventory of
+interactive elements for exactly that reason. With it in place the sidebar and the route
+table are the same set, so `verify_shell` compares them in both directions: a row marked
+ready with no route is a dead click, and a signed-in route with no row is a page nobody
+finds and nobody tests. Both now fail the build instead of the user.
+
 ## Configuration and profiles
 
 | Profile | Datasource | Purpose |

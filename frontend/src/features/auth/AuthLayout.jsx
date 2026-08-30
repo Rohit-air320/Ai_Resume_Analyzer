@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import MatchRail from '../../components/analysis/MatchRail.jsx'
 import { DEMO_ANALYSIS } from '../demo/demoAnalysis.js'
+import useDocumentTitle from '../../lib/useDocumentTitle.js'
 
 /**
  * Shared frame for the sign-in and sign-up screens.
@@ -27,11 +28,13 @@ import { DEMO_ANALYSIS } from '../demo/demoAnalysis.js'
  * @param {import('react').ReactNode} props.footer   the link to the other screen
  */
 export default function AuthLayout({ eyebrow, title, subtitle, children, footer }) {
+  useDocumentTitle(typeof title === 'string' ? title : null)
+
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[minmax(0,1fr)_28rem]">
       <MatchRailPreview />
 
-      <main className="flex min-h-screen flex-col justify-center border-line px-6 py-12 sm:px-10 lg:border-l">
+      <main id="main" className="flex min-h-screen flex-col justify-center border-line px-6 py-12 sm:px-10 lg:border-l">
         <div className="mx-auto w-full max-w-sm">
           <Link to="/" className="font-display text-lg font-semibold tracking-tight">
             Resume<span className="text-brand-600">IQ</span>

@@ -16,6 +16,7 @@ import MatchRail from '../components/analysis/MatchRail.jsx'
 import ScorePill from '../components/score/ScorePill.jsx'
 import { DEMO_ANALYSIS } from '../features/demo/demoAnalysis.js'
 import { SCORE_BANDS } from '../lib/scoreBands.js'
+import useDocumentTitle from '../lib/useDocumentTitle.js'
 
 /**
  * The landing page.
@@ -111,6 +112,7 @@ const REFUSALS = [
 ]
 
 export default function Landing() {
+  useDocumentTitle('Know how your resume performs before you apply')
   const demoGaps = DEMO_ANALYSIS.missingSkills.length
   const heroMetrics = [
     { label: 'ATS score', value: DEMO_ANALYSIS.atsScore },
@@ -122,7 +124,7 @@ export default function Landing() {
     <div className="min-h-screen">
       <SiteHeader />
 
-      <main>
+      <main id="main">
         {/* Hero: the claim on the left, the product itself on the right. */}
         <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
           <div className="grid items-center gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:gap-16">
