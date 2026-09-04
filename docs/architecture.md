@@ -293,6 +293,44 @@ table are the same set, so `verify_shell` compares them in both directions: a ro
 ready with no route is a dead click, and a signed-in route with no row is a page nobody
 finds and nobody tests. Both now fail the build instead of the user.
 
+## The documentation, and why it is verified
+
+A README has no compiler, no linter and no test, and it is read before anything else. That
+combination makes it reliably the most wrong file in a repository, and this one proved the rule:
+the Phase 1 stub survived ten phases while documenting a `JWT_EXPIRATION_MINUTES` that no code
+reads, listing shipped refresh-token rotation under "future improvements", and printing a folder
+tree from before the analysis engine existed. Nothing broke. It just quietly told every reader
+that the project was less finished, and less careful, than it is.
+
+The fix is not discipline, because discipline is what already failed. `verify_docs` makes the
+falsifiable half of the prose fail the build: every relative link and in-page anchor resolves,
+every path in the layout tree exists and is the kind of thing the tree says it is, every route
+and environment variable named in the README exists in `App.jsx` or an `.env.example`, every
+`npm run` script and Spring profile is real, the quoted test counts are recomputed from the
+suites, the licence file and the README agree on terms, and the check count the README boasts
+about is this file's own count, passed in from `main` so it counts itself.
+
+The endpoint table in `docs/api.md` is compared against the controllers in both directions —
+a documented endpoint nothing maps, and a mapped endpoint nothing documents, are equally bad and
+were equally invisible. The table's `Auth` column is checked against `PUBLIC_ENDPOINTS` too,
+because a table that advertises a public endpoint the filter chain closes is worse than no table:
+a reader builds a client against it and gets a `401` with no idea why.
+
+Two findings from writing it are worth keeping. The first is a parser bug that is a small lesson
+in how checks lie: pairing single backticks across a whole markdown file does not work, because a
+three-backtick fence leaves the pairing shifted by one for the rest of the file, so every inline
+span after the first code block was read as garbage. The env-var check passed a clean tree while
+examining nothing at all, and only a planted defect that failed to fire exposed it — the same
+failure mode as Phase 11, from a different direction. `md_prose` strips fences first, and both
+span-scanning checks now assert a minimum yield, so a future parser regression fails loudly
+instead of going quiet. The second is that `motion` had been sitting in `package.json` for three
+phases, imported nowhere; every declared dependency is now required to appear in an import under
+`frontend/src`.
+
+The screenshots are the one thing left deliberately undone. `docs/screenshots/` holds a capture
+list rather than images, and the README links to that list rather than to files — six broken
+image icons would undo everything above.
+
 ## Configuration and profiles
 
 | Profile | Datasource | Purpose |

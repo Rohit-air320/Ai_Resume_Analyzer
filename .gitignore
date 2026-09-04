@@ -35,6 +35,12 @@ uploads/
 # it; this is the safety net for a run that failed before its own cleanup.
 build/
 
+# ---------- Python (the verification harness) ----------
+# `tools/verify_sources.py` is imported by the mutation drill, which makes CPython
+# write bytecode next to it. Generated, machine-specific, and never worth a diff.
+__pycache__/
+*.py[cod]
+
 # ---------- IDE / OS ----------
 .idea/
 *.iml

@@ -2448,6 +2448,329 @@ def verify_shell(root: Path) -> None:
               "a second writer means the last effect to run wins, which depends on render order")
 
 
+# ---------------------------------------------------------------------------
+# Phase 14: the documentation.
+# ---------------------------------------------------------------------------
+
+HTTP_METHOD_ANNOTATIONS = {
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "DeleteMapping": "DELETE",
+    "PatchMapping": "PATCH",
+}
+
+
+def mapping_suffix(args: str) -> str:
+    """The path a Spring mapping annotation declares, given its argument text.
+
+    Three spellings are in use in this codebase and all three have to be read the same:
+    no arguments at all (`@GetMapping`), a bare literal (`@GetMapping("/{id}")`), and a
+    named attribute alongside others (`@PostMapping(path = "/upload", consumes = ...)`).
+    Taking the first string literal unconditionally would be wrong for the third — a day
+    will come when `produces = "application/pdf"` is the only literal present, and the
+    endpoint would silently be recorded at the wrong path.
+    """
+    args = args.strip()
+    if not args:
+        return ""
+    named = re.search(r'\b(?:path|value)\s*=\s*"([^"]*)"', args)
+    if named:
+        return named.group(1)
+    bare = re.match(r'"([^"]*)"', args)
+    return bare.group(1) if bare else ""
+
+
+def controller_endpoints(root: Path) -> dict[tuple[str, str], str]:
+    """Every (METHOD, path) the API actually exposes, mapped to the file that declares it."""
+    found: dict[tuple[str, str], str] = {}
+    base = root / "backend" / "src" / "main" / "java"
+    for path in walk_files(base):
+        if not path.name.endswith("Controller.java"):
+            continue
+        cleaned = read_cleaned(path, keep_strings=True)
+        prefix_match = re.search(r'@RequestMapping\(\s*"([^"]*)"', cleaned)
+        prefix = prefix_match.group(1) if prefix_match else ""
+        for match in re.finditer(
+                r"@(" + "|".join(HTTP_METHOD_ANNOTATIONS) + r")\b(?:\(([^)]*)\))?", cleaned):
+            verb = HTTP_METHOD_ANNOTATIONS[match.group(1)]
+            route = (prefix + mapping_suffix(match.group(2) or "")).rstrip("/") or "/"
+            found[(verb, route)] = path.name
+    return found
+
+
+def documented_endpoints(api_doc: Path) -> list[tuple[str, str, str]]:
+    """The rows of `docs/api.md`'s Endpoints table as (method, path, auth)."""
+    source = read_source(api_doc)
+    section = source.split("## Endpoints", 1)
+    if len(section) < 2:
+        return []
+    rows = []
+    for line in section[1].splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 3 or cells[0] in {"Method", "---"}:
+            continue
+        rows.append((cells[0], cells[1].strip("`"), cells[2]))
+    return rows
+
+
+def md_prose(source: str) -> str:
+    """Markdown with fenced code blocks removed, for scanning inline `code` spans.
+
+    Naively pairing backticks across a whole file is wrong, and wrong in the direction that
+    hides bugs. A fence is three backticks, so the opener's third backtick pairs with the
+    closer's first, the closer's third then pairs with the next inline backtick in the prose,
+    and from there every span in the rest of the file is shifted by one. The env-var check
+    below passed a clean tree while reading nothing but garbage because of it — caught only
+    when a planted defect failed to fire.
+
+    Dropping the fences first also draws the right boundary: a name inside a fence is part of
+    a command, and the commands are checked as commands elsewhere in this function.
+    """
+    return re.sub(r"```.*?```", "", source, flags=re.S)
+
+
+def code_spans(source: str) -> set[str]:
+    """Every inline `code` span in a markdown file's prose."""
+    return set(re.findall(r"`([^`\n]+)`", md_prose(source)))
+
+
+def markdown_files(root: Path) -> list[Path]:
+    return [path for path in walk_files(root) if path.suffix == ".md"]
+
+
+def heading_slugs(source: str) -> set[str]:
+    """GitHub's anchor for each heading: lowercased, spaces hyphenated, punctuation dropped."""
+    slugs = set()
+    for line in md_prose(source).splitlines():
+        if not line.startswith("#"):
+            continue
+        text = line.lstrip("#").strip().replace("`", "")
+        slug = re.sub(r"[^a-z0-9\s-]", "", text.lower()).strip().replace(" ", "-")
+        slugs.add(slug)
+    return slugs
+
+
+def tree_paths(block: str) -> list[str]:
+    """Read an ASCII directory tree into repo-relative paths.
+
+    Indentation is the only thing that says what is nested inside what, so the depth is
+    taken from the column the branch glyph sits in — four columns per level — and a stack
+    of ancestors is carried down. Everything after the first token on a line is a comment.
+    """
+    stack: dict[int, str] = {}
+    paths = []
+    for line in block.splitlines():
+        marker = max(line.find("├── "), line.find("└── "))
+        if marker < 0:
+            continue
+        depth = marker // 4
+        name = line[marker + 4:].split()[0]
+        parent = "".join(stack.get(level, "") for level in range(depth))
+        full = parent + name
+        stack[depth] = name if name.endswith("/") else ""
+        for level in list(stack):
+            if level > depth:
+                del stack[level]
+        paths.append(full)
+    return paths
+
+
+def verify_docs(root: Path) -> None:
+    """
+    Phase 14: prove the documentation still describes this code.
+
+    A README is the one file in a repository with no compiler, no linter and no test, which
+    is why it is reliably the most wrong file present. The Phase 1 README this replaced had
+    drifted into describing an environment variable that does not exist, listing a shipped
+    feature under "future improvements", and printing a folder tree from ten phases ago —
+    none of which broke anything, and all of which would have been the first thing a reader
+    saw.
+
+    So the prose stays prose, but every falsifiable claim in it is checked here: the paths,
+    the routes, the env vars, the commands, the counts, the licence and the endpoint table.
+    The point is not that these facts are interesting. It is that they are the facts that go
+    stale silently, and a stale README is read as carelessness about everything else.
+    """
+    readme = root / "README.md"
+    api_doc = root / "docs" / "api.md"
+    package_json = root / "frontend" / "package.json"
+    check("README.md exists", readme.exists())
+    check("docs/api.md exists", api_doc.exists())
+    if not (readme.exists() and api_doc.exists() and package_json.exists()):
+        return
+    readme_text = read_source(readme)
+
+    # --- The endpoint table against the controllers, both directions ----------------
+    real = controller_endpoints(root)
+    rows = documented_endpoints(api_doc)
+    check("api.md documents endpoints", len(rows) > 0, "the Endpoints table parsed to nothing")
+    documented = {(method, path) for method, path, _ in rows}
+    check("api.md endpoint rows are unique", len(documented) == len(rows),
+          "a duplicated row would let one endpoint's row rot unnoticed")
+    for method, path in sorted(documented):
+        check(f"api.md documents a real endpoint: {method} {path}", (method, path) in real,
+              "no controller maps it")
+    for method, path in sorted(real):
+        check(f"api.md documents {method} {path}", (method, path) in documented,
+              f"mapped in {real[(method, path)]} but missing from the table")
+
+    # An endpoint's advertised auth has to match the filter chain, or the table is worse
+    # than no table: a reader would build a client against it and get a 401.
+    config = root / "backend" / "src" / "main" / "java" / "com" / "resumeiq" / "security" / "SecurityConfig.java"
+    if config.exists():
+        block = re.search(r"PUBLIC_ENDPOINTS\s*=\s*\{(.*?)\}", read_cleaned(config, keep_strings=True), re.S)
+        open_paths = set(re.findall(r'"([^"]*)"', block.group(1))) if block else set()
+        check("SecurityConfig declares public endpoints", bool(open_paths))
+        for method, path, auth in rows:
+            if auth == "bearer":
+                check(f"api.md: {method} {path} is really closed", path not in open_paths,
+                      "the table says bearer, the filter chain permits it anonymously")
+            else:
+                check(f"api.md: {method} {path} is really open", path in open_paths,
+                      f"the table says '{auth}' but the filter chain requires authentication")
+
+    # --- Env vars named in the README exist ------------------------------------------
+    env_keys = set()
+    for env_file in [root / ".env.example", root / "frontend" / ".env.example"]:
+        if env_file.exists():
+            env_keys.update(re.findall(r"^([A-Z0-9_]+)=", read_source(env_file), re.M))
+    check("root .env.example parses", len(env_keys) > 20, f"only found {len(env_keys)} keys")
+    spans = code_spans(readme_text)
+    named_vars = {span.split("=")[0].strip() for span in spans}
+    named_vars = {name for name in named_vars
+                  if re.fullmatch(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+", name)}
+    # A parse that finds nothing would make every check below vacuous, which is how the
+    # first version of this passed while reading shifted nonsense. Assert the yield.
+    check("README names env vars in code spans", len(named_vars) >= 8,
+          f"only extracted {sorted(named_vars)} — the span parse is broken, not the README")
+    for name in sorted(named_vars):
+        check(f"README env var exists: {name}", name in env_keys,
+              "named in the README, absent from both .env.example files")
+
+    # --- Routes named in the README exist --------------------------------------------
+    app = root / "frontend" / "src" / "App.jsx"
+    if app.exists():
+        routes = set(re.findall(r'path="([^"]*)"', read_source(app)))
+        check("App.jsx declares routes", len(routes) > 5)
+        named_routes = {span for span in spans
+                        if re.fullmatch(r"/[a-z0-9:/-]*", span) and not span.startswith("/api")}
+        check("README names routes in code spans", len(named_routes) >= 3,
+              f"only extracted {sorted(named_routes)}")
+        for span in sorted(named_routes):
+            check(f"README route exists: {span}", span in routes,
+                  "the README sends a reader to a route the router does not declare")
+
+    # --- Every relative link and image resolves --------------------------------------
+    for path in markdown_files(root):
+        source = read_source(path)
+        rel = path.relative_to(root).as_posix()
+        for target in re.findall(r"\]\(([^)\s]+)\)", source):
+            if re.match(r"^(?:https?:|mailto:|tel:)", target):
+                continue
+            if target.startswith("#"):
+                check(f"{rel} anchor resolves: {target}",
+                      target[1:] in heading_slugs(source), "no heading in this file has that slug")
+                continue
+            file_part = target.split("#", 1)[0]
+            check(f"{rel} link resolves: {target}", (path.parent / file_part).exists(),
+                  "relative link points at a path that is not on disk")
+
+    # --- The project tree, the commands and the counts --------------------------------
+    layout = re.search(r"## Project layout\s*```([^`]*)```", readme_text)
+    check("README has a project layout block", layout is not None)
+    if layout:
+        entries = tree_paths(layout.group(1))
+        check("README layout block parsed", len(entries) > 10, f"found {len(entries)} entries")
+        for entry in entries:
+            target = root / entry
+            check(f"README layout entry exists: {entry}", target.exists(),
+                  "the tree names something that is not there")
+            if entry.endswith("/"):
+                check(f"README layout entry is a directory: {entry}", target.is_dir())
+
+    scripts = set(json.loads(read_source(package_json)).get("scripts", {}))
+    for path in markdown_files(root):
+        source = read_source(path)
+        rel = path.relative_to(root).as_posix()
+        for script in set(re.findall(r"\bnpm run ([a-z:]+)", source)):
+            check(f"{rel} names a real npm script: npm run {script}", script in scripts,
+                  f"package.json defines {sorted(scripts)}")
+        for profile in set(re.findall(r"spring-boot\.run\.profiles=([a-z]+)", source)):
+            check(f"{rel} names a real Spring profile: {profile}",
+                  (root / "backend" / "src" / "main" / "resources" / f"application-{profile}.yml").exists())
+        for script in set(re.findall(r"python3 (tools/[a-z_]+\.py)", source)):
+            check(f"{rel} names a real script: {script}", (root / script).exists())
+
+    # A dependency nothing imports is dead weight a reader has to rule out by hand, and
+    # `motion` sat in this file for three phases doing exactly that.
+    manifest = json.loads(read_source(package_json))
+    src = root / "frontend" / "src"
+    imports = "\n".join(read_source(path) for path in walk_files(src)
+                        if path.suffix in {".js", ".jsx"})
+    for name in manifest.get("dependencies", {}):
+        used = re.search(r"""from\s+['"]""" + re.escape(name) + r"""(?:/[^'"]*)?['"]""", imports)
+        check(f"dependency is used: {name}", bool(used),
+              "declared in package.json, imported nowhere under frontend/src")
+
+    counts = re.search(
+        r"(\d+) backend tests across (\d+) files, and (\d+) frontend tests across (\d+) files",
+        readme_text)
+    check("README states its test counts", counts is not None)
+    if counts:
+        backend_tests = list(walk_files(root / "backend" / "src" / "test"))
+        java_tests = [p for p in backend_tests if p.suffix == ".java"]
+        declared = sum(len(re.findall(r"@(?:Test|ParameterizedTest)\b", read_source(p)))
+                       for p in java_tests)
+        # `it(` only when it opens a case: `describe.it` is not a thing, but `await it(` and
+        # `unit(` both are, so the character before has to be neither word nor dot.
+        jsx_tests = [p for p in walk_files(root / "frontend" / "src")
+                     if "__tests__" in p.parts or p.name.endswith(".test.jsx")]
+        cases = sum(len(re.findall(r"(?<![\w.])it\(", read_source(p))) for p in jsx_tests)
+        check("README backend test count is current", int(counts.group(1)) == declared,
+              f"README says {counts.group(1)}, the suite declares {declared}")
+        check("README backend test file count is current", int(counts.group(2)) == len(java_tests),
+              f"README says {counts.group(2)}, found {len(java_tests)}")
+        check("README frontend test count is current", int(counts.group(3)) == cases,
+              f"README says {counts.group(3)}, the suite declares {cases}")
+        check("README frontend test file count is current", int(counts.group(4)) == len(jsx_tests),
+              f"README says {counts.group(4)}, found {len(jsx_tests)}")
+
+    licence = root / "LICENSE"
+    check("LICENSE exists", licence.exists(), "the README links to it")
+    if licence.exists():
+        named = re.search(r"^(MIT|Apache|BSD|GPL)", read_source(licence).split("\n", 1)[0])
+        check("LICENSE names a licence", named is not None)
+        if named:
+            check(f"README agrees with LICENSE: {named.group(1)}",
+                  named.group(1) in readme_text,
+                  "the licence file and the README disagree about the terms")
+
+
+def verify_readme_check_count(root: Path, total: int) -> None:
+    """
+    The README quotes how many checks this file runs, so the number has to be this file's.
+
+    It is the one claim in the README that cannot be verified from the outside, and it is
+    also the most quotable — which is exactly the combination that produces a number nobody
+    updates. `total` is passed in rather than read from the global because this runs last,
+    counting itself.
+    """
+    readme = root / "README.md"
+    if not readme.exists():
+        return
+    stated = re.search(r"(\d[\d,]{3,}) checks", read_source(readme))
+    check("README states the check count", stated is not None)
+    if stated:
+        check("README check count is current", int(stated.group(1).replace(",", "")) == total,
+              f"README says {stated.group(1)}, this run performed {total}")
+
+
 def main() -> int:
     default_root = Path(__file__).resolve().parent.parent
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else default_root
@@ -2475,6 +2798,8 @@ def main() -> int:
     verify_demo_fixture(root)
     verify_security(root)
     verify_shell(root)
+    verify_docs(root)
+    verify_readme_check_count(root, CHECKS_RUN + 2)
 
     print(f"{CHECKS_RUN} checks run")
     if WARNINGS:
